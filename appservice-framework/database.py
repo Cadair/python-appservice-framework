@@ -82,9 +82,6 @@ class AuthenticatedUser(Base):
     # service side.
     service_id = sa.Column(sa.String, nullable=True)
 
-    # Full Name
-    nick = sa.Column(sa.String)
-
     # User name and "password"
     service_username = sa.Column(sa.String, nullable=True)
     auth_token = sa.Column(sa.String, nullable=True)

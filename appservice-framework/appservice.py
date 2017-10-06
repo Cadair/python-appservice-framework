@@ -94,6 +94,7 @@ class AppService:
 
         return coro
 
+    # TODO: Add matrix state (online/offline)
     # TODO: Add matrix user read
     # TODO: Add matrix m.emote
     # TODO: Add matrix m.image
@@ -102,6 +103,23 @@ class AppService:
     ######################################################################################
     # Service Event Decorators
     ######################################################################################
+
+    def service_recieve_message(self, coro):
+        """
+        Decorator for when an authenticated user recieves a message.
+
+        coro(appservice)
+
+        Returns:
+            service_userid : `str`
+            service_roomid : `str`
+            message_plain : `str`
+        """
+        # TODO: Handle plain/HTML/markdown
+
+        self.service_events['recieve_message'] = coro
+
+        return coro
 
     def service_room_exists(self, coro):
         """
@@ -115,17 +133,17 @@ class AppService:
 
     def service_join_room(self, coro):
         """
-        Decorator for when a service user joins a room.
+        Decorator for when an authenticated user joins a room.
 
         coro(appservice)
 
         Returns:
-            matrix_mxid : `str`
-            matrix_room_alias : `str`
+            service_userid : `str`
+            servicce_roomid : `str`
         """
 
         async def join_room(self):
-            mxid, room_alias = await coro(self)
+            userid, roomid = await coro(self)
 
             # TODO: Perform matrix side stuff
 
@@ -135,7 +153,7 @@ class AppService:
 
     def service_part_room(self, coro):
         """
-        Decorator for when a service user leaves a room.
+        Decorator for when an authenticated user leaves a room.
 
         coro(appservice)
 
@@ -154,6 +172,8 @@ class AppService:
 
     def service_change_profile_image(self, coro):
         """
+        Decorator for when an authenticated user changes profile picture
+
         coro(appservice)
 
         Returns:
@@ -174,16 +194,42 @@ class AppService:
         return profile_image
 
     ######################################################################################
-    # Appservice Methods
+    # Public Appservice Methods
     ######################################################################################
 
-    async def add_appservice_user(self, username):
-        pass
+    async def add_authenticated_user(self, mxid, service_id, username, token):
+        """
+        Login an authenticated user with the appservice.
+        """
 
-    async def join_user_room(self, username, room):
-        pass
+    async def create_linked_room(self, mxid, matrix_roomid, service_roomid, auth_mxid):
+        """
+        Create a linked room.
+
+        This method will create a link between a service room for a single
+        authenticated user (others can be added afterwards) and a matrix room.
+
+        Will not do anything if room is already linked.
+        """
+
+    async def linked_room_exists(self, matrix_roomid=None, service_roomid=None):
+        """
+        Check to see if a room is already linked.
+
+        Takes *either* a matrix or service room id.
+        """
+
+    async def add_auth_user_to_room(self, auth_mxid, matrix_roomid):
+        """
+        Add an authenticated user to a room.
+
+        Will not do anything if user is already in room.
+        """
 
     async def set_matrix_profile_image(self, user_id, image_url, force=False):
+        """
+        Set the profile image for a matrix user.
+        """
         if force or not await self.matrix_client.get_avatar_url(user_id) and image_url:
             # Download profile picture
             async with self.client_session.request("GET", image_url) as resp:
@@ -191,7 +237,7 @@ class AppService:
 
             # Upload to homeserver
             resp = await self.matrix_client.media_upload(data, resp.content_type,
-                                                            user_id=user_id)
+                                                         user_id=user_id)
             json = await resp.json()
             avatar_url = json['content_uri']
 
