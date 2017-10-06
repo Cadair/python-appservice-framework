@@ -95,6 +95,9 @@ class AppService:
         return coro
 
     # TODO: Add matrix user read
+    # TODO: Add matrix m.emote
+    # TODO: Add matrix m.image
+    # TODO: Add a hook for plain text or html messages?
 
     ######################################################################################
     # Service Event Decorators
