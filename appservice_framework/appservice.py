@@ -44,7 +44,19 @@ class AppService:
         """
         Receive an Appservice push matrix event.
         """
-        return aiohttp.web.Response(status=404)
+        json = await request.json()
+        events = json["events"]
+        for event in events:
+            if "hangouts" not in event['user_id']:
+            meth = self._matrix_event_dispatch.get(event['type'], None)
+            if meth:
+                try:
+                    await meth(event)
+                except Exception as e:
+                    log.error(str(e))
+                    return web.Response(staus=500)
+
+        return web.Response(body=b"{}")
 
     async def room_alias(self, request):
         """
@@ -106,7 +118,7 @@ class AppService:
 
     def service_recieve_message(self, coro):
         """
-        Decorator for when an authenticated user recieves a message.
+        Decorator for when an authenticated user receives a message.
 
         coro(appservice)
 
@@ -116,6 +128,7 @@ class AppService:
             message_plain : `str`
         """
         # TODO: Handle plain/HTML/markdown
+        # TODO: Frontier user filtering
 
         self.service_events['recieve_message'] = coro
 
