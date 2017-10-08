@@ -1,0 +1,26 @@
+- name: Install git
+  apt:
+    name: git
+    state: present
+
+- name: Install minircd
+  git:
+    repo: 'https://github.com/jrosdahl/miniircd.git'
+    dest: /opt/miniircd
+
+- name: Create miniircd user
+  user:
+    name: miniircd
+    state: present
+
+- name: Install systemd service
+  template:
+    src: miniircd.service.j2
+    dest: /etc/systemd/system/miniircd.service
+
+- name: Enable and start miniircd
+  systemd:
+    name: miniircd.service
+    state: started
+    enabled: True
+    daemon_reload: yes

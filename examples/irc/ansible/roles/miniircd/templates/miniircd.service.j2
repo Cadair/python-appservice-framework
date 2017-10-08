@@ -1,0 +1,9 @@
+[Unit]
+Description=miniircd
+
+[Service]
+ExecStart=/opt/miniircd/miniircd
+User=miniircd
+
+[Install]
+WantedBy=multi-user.target

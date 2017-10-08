@@ -1,0 +1,74 @@
+- name: Fix tricksy package
+  apt:
+    name: apt-transport-https 
+    update_cache: no
+    force: yes
+    allow_unauthenticated: yes
+
+- name: Add Jessie Backports
+  apt_repository:
+      repo: deb http://ftp.debian.org/debian jessie-backports main
+      state: present
+
+- name: Install Matrix Repo
+  apt_repository:
+    repo: deb http://matrix.org/packages/debian/ jessie main
+    state: present
+
+- name: Add repo key
+  apt_key:
+    url: http://matrix.org/packages/debian/repo-key.asc
+
+- name: Update and upgrade
+  apt:
+      update_cache: yes
+      upgrade: yes
+
+- name: Update repositories cache and install "synapse" package
+  apt:
+    name: matrix-synapse
+    default_release: jessie-backports
+    update_cache: yes
+
+- name: Install the web client
+  apt:
+    name: matrix-synapse-angular-client
+
+- name: Make Synapse config folder
+  file: path=/etc/synapse state=directory
+
+- name: Configure Synapse (debconf)
+  debconf:
+    name: matrix-synapse
+    question: matrix-synapse/server-name
+    value: localhost
+    vtype: string
+
+- name: Copy homeserver.yaml
+  template:
+    src: templates/homeserver.yaml
+    dest: /etc/matrix-synapse/homeserver.yaml
+    force: yes
+
+- name: Start Synapse (systemd)
+  systemd:
+    name: matrix-synapse
+    state: restarted
+    enabled: True
+
+- name: Wait for Synapse to Start
+  wait_for:
+    host: localhost
+    port: 8008
+    delay: 5
+    state: started
+
+- name: Add an admin user to Synapse
+  shell: "register_new_matrix_user -c /etc/matrix-synapse/homeserver.yaml -u admin -p admin -a && touch /etc/matrix-synapse/admin"
+  args:
+    creates: /etc/matrix-synapse/admin
+
+- name: Add an admin2 user to Synapse
+  shell: "register_new_matrix_user -c /etc/matrix-synapse/homeserver.yaml -u admin2 -p admin -a && touch /etc/matrix-synapse/admin2"
+  args:
+    creates: /etc/matrix-synapse/admin2
