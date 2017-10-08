@@ -1,8 +1,8 @@
 import json
 from asyncio import sleep
 
-from .api import MatrixHttpApi
-from .errors import MatrixError, MatrixRequestError
+from matrix_client.api import MatrixHttpApi
+from matrix_client.errors import MatrixError, MatrixRequestError
 
 
 class AsyncHTTPAPI(MatrixHttpApi):

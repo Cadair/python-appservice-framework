@@ -47,16 +47,14 @@ class AppService:
         json = await request.json()
         events = json["events"]
         for event in events:
-            if "hangouts" not in event['user_id']:
             meth = self._matrix_event_dispatch.get(event['type'], None)
             if meth:
                 try:
                     await meth(event)
                 except Exception as e:
-                    log.error(str(e))
-                    return web.Response(staus=500)
+                    return aiohttp.web.Response(staus=500)
 
-        return web.Response(body=b"{}")
+        return aiohttp.web.Response(body=b"{}")
 
     async def room_alias(self, request):
         """
