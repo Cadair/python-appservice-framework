@@ -25,6 +25,8 @@ class AppService:
         self.app = aiohttp.web.Application(loop=self.loop)
         self._routes()
 
+        # Setup internal matrix event dispatch
+        self._matrix_event_mapping()
         self.matrix_events = {}
 
     ######################################################################################
@@ -36,11 +38,11 @@ class AppService:
         Add route handlers to the web server.
         """
         self.app.router.add_route('PUT', "/transactions/{transaction}",
-                                  self.recieve_matrix_transaction)
-        self.app.router.add_route('GET', "/rooms/{alias}", self.room_alias)
-        self.app.router.add_route('GET', "/users/{userid}", self.query_userid)
+                                  self._recieve_matrix_transaction)
+        self.app.router.add_route('GET', "/rooms/{alias}", self._room_alias)
+        self.app.router.add_route('GET', "/users/{userid}", self._query_userid)
 
-    async def recieve_matrix_transaction(self, request):
+    async def _recieve_matrix_transaction(self, request):
         """
         Receive an Appservice push matrix event.
         """
@@ -56,17 +58,42 @@ class AppService:
 
         return aiohttp.web.Response(body=b"{}")
 
-    async def room_alias(self, request):
+    async def _room_alias(self, request):
         """
         Handle an Appservice room_alias call.
         """
         return aiohttp.web.Response(status=404)
 
-    async def query_userid(self, request):
+    async def _query_userid(self, request):
         """
         Handle an Appservice userid call.
         """
         return aiohttp.web.Response(status=404)
+
+    ######################################################################################
+    # Internal Matrix Handlers
+    ######################################################################################
+
+    def _matrix_event_mapping(self):
+        """
+        Define a event['type'] -> method mapping.
+        """
+        self._matrix_event_dispatch = {
+            'm.room.member': self._matrix_membership_change,
+            'm.room.message': self._matrix_message
+        }
+
+    async def _matrix_membership_change(self, event):
+        # TODO: If an invite to a room we don't know about
+        # TODO: If a direct chat invite (for admin room).
+        # TODO: If a leave event in a bridged room.
+        # TODO: If a join event in a bridged room.
+        pass
+
+    async def _matrix_message(self, event):
+        # TODO: If a message in a bridged room.
+        # TODO: If a message in an admin room.
+        pass
 
     ######################################################################################
     # Matrix Event Decorators
@@ -74,6 +101,8 @@ class AppService:
 
     def matrix_recieve_message(self, coro):
         """
+        A matrix 'm.room.message' event in a bridged room.
+
         coro(appservice, event)
         """
         self.matrix_events['recieve_message'] = coro

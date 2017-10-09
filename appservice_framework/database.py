@@ -85,6 +85,10 @@ class AuthenticatedUser(Base):
     service_username = sa.Column(sa.String, nullable=True)
     auth_token = sa.Column(sa.String, nullable=True)
 
+    # This is the service user that the bridge uses (i.e. is not associated
+    # with a real matrix user).
+    bridge_user = sa.Column(sa.Boolean)
+
     rooms = relationship(
         "AuthenticatedUser",
         secondary=auth_association_table,
