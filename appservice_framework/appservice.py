@@ -1,5 +1,10 @@
-import aiohttp
+import asyncio
+from functools import wraps, partial
 
+import aiohttp
+import aiohttp.web
+
+from . import database
 from .async_matrix_api import AsyncHTTPAPI
 
 
@@ -10,8 +15,13 @@ class AppService:
     This needs to maintain state of matrix rooms and bridged users in those rooms.
     """
 
-    def __init__(self, *, matrix_server, server_domain, access_token,
-                 user_namespace, room_namespace, loop=None):
+    def __init__(self, matrix_server, server_domain, access_token,
+                 user_namespace, room_namespace, database_url, loop=None):
+
+        if loop:
+            self.loop = loop
+        else:
+            self.loop = asyncio.get_event_loop()
 
         self.client_session = aiohttp.ClientSession(loop=self.loop)
         self.api = AsyncHTTPAPI(matrix_server, self.client_session, access_token)
@@ -21,6 +31,8 @@ class AppService:
         self.user_namespace = user_namespace
         self.room_namespace = room_namespace
 
+        self.database_session = database.initialize(database_url)
+
         # Setup web server to listen for appservice calls
         self.app = aiohttp.web.Application(loop=self.loop)
         self._routes()
@@ -28,10 +40,42 @@ class AppService:
         # Setup internal matrix event dispatch
         self._matrix_event_mapping()
         self.matrix_events = {}
+        self.service_events = {}
+
+    def _make_async(self, call):
+
+        if not asyncio.iscoroutinefunction(call):
+            @wraps(call)
+            def caller(*args, **kwargs):
+                self.loop.run_soon(partial(call, **kwargs), args)
+
+            return caller
+
+        else:
+            return call
 
     ######################################################################################
     # Appservice Web Server Handles
     ######################################################################################
+
+    def run(self, host="127.0.0.1", port=5000):
+        """
+        Run the appservice.
+        """
+        service_connect = self.service_events.get('connect', None)
+        service_connect_sync = self.service_events.get('connect_sync', None)
+
+        if service_connect:
+            self.loop.run_until_complete(service_connect())
+
+        elif service_connect_sync:
+            service_connect_sync()
+
+        else:
+            raise KeyError("You must define a @appservice.service_connect"
+                           "coroutine or a @appservice.connect_sync function.")
+
+        aiohttp.web.run_app(self.app, host=host, port=port)
 
     def _routes(self):
         """
@@ -93,7 +137,7 @@ class AppService:
     async def _matrix_message(self, event):
         # TODO: If a message in a bridged room.
         # TODO: If a message in an admin room.
-        pass
+        print(event)
 
     ######################################################################################
     # Matrix Event Decorators
@@ -142,6 +186,43 @@ class AppService:
     ######################################################################################
     # Service Event Decorators
     ######################################################################################
+
+    def service_connect(self, coro):
+        """
+        Connect to the service.
+
+        coro(appservice, serviceid, auth_token)
+
+        Returns:
+            `service` an object representing the connection, becomes ``appservice.service``.
+        """
+        coro = self._make_async(coro)
+
+        async def connect_service():
+            self.service = await coro(self)
+
+        self.service_events['connect'] = connect_service
+
+        return connect_service
+
+    def service_connect_sync(self, func):
+        """
+        Connect to the service synchronously.
+
+        func(appservice, serviceid, auth_token)
+
+        Returns:
+            `service` an object representing the connection, becomes ``appservice.service``.
+        """
+        if 'connect' in self.service_events.keys():
+            raise ValueError("Please define either connect or connect_sync not both.")
+
+        def connect_service():
+            self.service = func(self)
+
+        self.service_events['connect_sync'] = connect_service
+
+        return connect_service
 
     def service_recieve_message(self, coro):
         """

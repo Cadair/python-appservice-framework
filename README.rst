@@ -36,7 +36,7 @@ Single Puppet bridge
 
 Assume everything is public (like IRC bridge but unknown rooms on service side):
 
-`Telegram Bot <https://t2bot.io/telegram>`_ or `Discord Bot<https://t2bot.io/discord>`_
+`Telegram Bot <https://t2bot.io/telegram>`_ or `Discord Bot <https://t2bot.io/discord>`_
 
 1. Invite bot user to service room
 2. Link to matrix room posted in service room.

@@ -81,8 +81,6 @@ class AuthenticatedUser(Base):
     # service side.
     serviceid = sa.Column(sa.String, nullable=True)
 
-    # User name and "password"
-    service_username = sa.Column(sa.String, nullable=True)
     auth_token = sa.Column(sa.String, nullable=True)
 
     # This is the service user that the bridge uses (i.e. is not associated
