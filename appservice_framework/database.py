@@ -4,105 +4,110 @@ import sqlalchemy as sa
 
 Base = declarative_base()
 
-__all__ = ['AdminRoom', 'LinkedRoom', 'AuthenticatedUser', 'ServiceUser', 'initialize']
+__all__ = ['Room', 'LinkedRoom', 'User', 'AuthenticatedUser', 'initialize']
 
 
-auth_association_table = sa.Table('auth_association', Base.metadata,
-                                  sa.Column('room_id', sa.Integer,
-                                            sa.ForeignKey('rooms.id')),
-                                  sa.Column('user_id', sa.Integer,
-                                            sa.ForeignKey('auth_users.id')))
+room_user_table = sa.Table('user_association', Base.metadata,
+                           sa.Column('roomid', sa.Integer,
+                                     sa.ForeignKey('room.id')),
+                           sa.Column('userid', sa.Integer,
+                                     sa.ForeignKey('user.id')))
 
-service_association_table = sa.Table('service_association', Base.metadata,
-                                     sa.Column('room_id', sa.Integer,
-                                               sa.ForeignKey('rooms.id')),
-                                     sa.Column(
-                                         'user_id', sa.Integer,
-                                         sa.ForeignKey('service_users.id')))
-
-
-class AdminRoom(Base):
+class Room(Base):
     """
-    A one-one message between the bridge and a matrix user.
+    A Matrix room.
     """
-    __tablename__ = "admin_rooms"
+    __tablename__ = "room"
 
     id = sa.Column(sa.Integer, primary_key=True)
+    type = sa.Column(sa.String)
+    __mapper_args__ = {
+        'polymorphic_identity': 'admin',
+        'polymorphic_on': type
+    }
     matrix_roomid = sa.Column(sa.String)
     active = sa.Column(sa.Boolean)
-    matrix_user = sa.Column(sa.String)
 
-
-class LinkedRoom(Base):
-    """
-    A room where the bridge is active.
-    """
-    __tablename__ = "rooms"
-
-    id = sa.Column(sa.Integer, primary_key=True)
-    matrix_roomid = sa.Column(sa.String)
-    service_roomid = sa.Column(sa.String)
-    active = sa.Column(sa.Boolean)
-
-    # Maintain a list of all auth users in this room
-    auth_users = relationship(
-        "AuthenticatedUser",
-        secondary=auth_association_table,
+    users = relationship(
+        "User",
+        secondary=room_user_table,
         back_populates="rooms")
-
-    # Maintain a list of all service users in this room.
-    # This relationship is not bi-directional
-    service_users = relationship(
-        "ServiceUser", secondary=service_association_table)
 
     # Know which user to listen to events from
     frontier_userid = sa.Column(
-        sa.Integer, sa.ForeignKey("auth_users.id"), nullable=True)
+        sa.Integer, sa.ForeignKey("auth_user.id"), nullable=True)
     frontier_user = relationship("AuthenticatedUser")
 
-    def __init__(self, matrix_roomid, service_roomid, active=True):
+    def __init__(self, matrix_roomid, active=True):
         self.matrix_roomid = matrix_roomid
-        self.service_roomid = service_roomid
         self.active = active
 
 
-class AuthenticatedUser(Base):
+class LinkedRoom(Room):
     """
-    A User which is authenticated with the Bridge.
+    A Matrix room linked to a service room.
     """
-    __tablename__ = "auth_users"
+    __tablename__ = "linked_room"
+    __mapper_args__ = {
+        'polymorphic_identity': 'bridged',
+    }
+
+    id = sa.Column(sa.Integer, sa.ForeignKey('room.id'), primary_key=True)
+    service_roomid = sa.Column(sa.String)
+
+
+    def __init__(self, matrix_roomid, service_roomid, active=True):
+        super().__init__(matrix_roomid, active=active)
+        self.service_roomid = service_roomid
+
+
+class User(Base):
+    """
+    A user that exists in both matrix and the service.
+    """
+    __tablename__ = "user"
 
     id = sa.Column(sa.Integer, primary_key=True)
+    type = sa.Column(sa.String)
 
-    # mxid
+    __mapper_args__ = {
+        'polymorphic_identity': 'service',
+        'polymorphic_on': type
+    }
+
+    nick = sa.Column(sa.String)
+    serviceid = sa.Column(sa.String)
     matrixid = sa.Column(sa.String)
-
-    # For single-puppet bot bridges, you might not have a username on the
-    # service side.
-    serviceid = sa.Column(sa.String, nullable=True)
-
-    auth_token = sa.Column(sa.String, nullable=True)
-
-    # This is the service user that the bridge uses (i.e. is not associated
-    # with a real matrix user).
-    bridge_user = sa.Column(sa.Boolean)
 
     rooms = relationship(
-        "AuthenticatedUser",
-        secondary=auth_association_table,
-        back_populates="auth_users")
+        "Room",
+        secondary=room_user_table,
+        back_populates="users")
 
 
-class ServiceUser(Base):
+    def __init__(self, nick, matrixid, serviceid):
+        self.nick = nick
+        self.serviceid = serviceid
+        self.matrixid = matrixid
+
+
+class AuthenticatedUser(User):
     """
-    A User that only exists on the Service Side.
+    A user that is authenticated with the AS for the service. These users are
+    the only ones that can send and receive messages from the service.
     """
-    __tablename__ = "service_users"
+    __tablename__ = "auth_user"
+    __mapper_args__ = {
+        'polymorphic_identity': 'auth',
+    }
 
-    id = sa.Column(sa.Integer, primary_key=True)
-    serviceid = sa.Column(sa.String)
-    nick = sa.Column(sa.String)
-    matrixid = sa.Column(sa.String)
+    id = sa.Column(sa.Integer, sa.ForeignKey("user.id"), primary_key=True)
+    auth_token = sa.Column(sa.String, nullable=True)
+
+
+    def __init__(self, nick, matrixid, serviceid, auth_token):
+        super().__init__(nick, matrixid, serviceid)
+        self.auth_token = auth_token
 
 
 def initialize(*args, **kwargs):
