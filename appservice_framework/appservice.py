@@ -68,18 +68,10 @@ class AppService:
         """
         Run the appservice.
         """
-        service_connect = self.service_events.get('connect', None)
-        service_connect_sync = self.service_events.get('connect_sync', None)
-
-        if service_connect:
-            self.loop.run_until_complete(service_connect())
-
-        elif service_connect_sync:
-            service_connect_sync()
-
-        else:
-            raise KeyError("You must define a @appservice.service_connect"
-                           "coroutine or a @appservice.connect_sync function.")
+        for user in self.dbsession.query(db.AuthenticatedUser):
+            connection = self.service_events['connect'](self, user.serviceid, user.auth_token)
+            if connection:
+                self.service_connections[user] = connection
 
         aiohttp.web.run_app(self.app, host=host, port=port)
 
