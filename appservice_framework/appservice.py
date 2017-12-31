@@ -4,8 +4,11 @@ from functools import wraps, partial
 import aiohttp
 import aiohttp.web
 
-from . import database
+from . import database as db
 from .async_matrix_api import AsyncHTTPAPI
+
+
+__all__ = ['AppService']
 
 
 class AppService:
@@ -23,15 +26,15 @@ class AppService:
         else:
             self.loop = asyncio.get_event_loop()
 
-        self.client_session = aiohttp.ClientSession(loop=self.loop)
-        self.api = AsyncHTTPAPI(matrix_server, self.client_session, access_token)
+        self.http_session = aiohttp.ClientSession(loop=self.loop)
+        self.api = AsyncHTTPAPI(matrix_server, self.http_session, access_token)
 
         self.access_token = access_token
         self.server_name = server_domain
         self.user_namespace = user_namespace
         self.room_namespace = room_namespace
 
-        self.database_session = database.initialize(database_url)
+        self.dbsession = database.initialize(database_url)
 
         # Setup web server to listen for appservice calls
         self.app = aiohttp.web.Application(loop=self.loop)
@@ -41,6 +44,9 @@ class AppService:
         self._matrix_event_mapping()
         self.matrix_events = {}
         self.service_events = {}
+
+        # Keep a mapping of service connections
+        self.service_connections = {}
 
     def _make_async(self, call):
 
@@ -318,10 +324,45 @@ class AppService:
     # Public Appservice Methods
     ######################################################################################
 
-    async def add_authenticated_user(self, mxid, service_id, username, token):
+    async def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """
-        Login an authenticated user with the appservice.
+        Add an authenticated user to the appservice, and connect that user.
+
+        Parameters
+        ----------
+
+        matrixid : `str`
+            The matrix id of the user to add.
+
+        serviceid : `str`
+            The username/id for the service user.
+
+        auth_token : `str`
+            The authentication token for this user.
+
+        nick : `str` (optional)
+            A nickname for this user.
+
+        Returns
+        -------
+
+        connection : `object`
+            A connection object, as returned by the
+            ``@appservice.service_connect`` decorator.
+
         """
+        user = db.AuthenticatedUser(matrixid, serviceid, auth_token, nick=nick)
+        self.dbsession.add(user)
+        self.dbsession.commit()
+
+        if user not in self.service_connections:
+            connection = await self.service_events['connect'](self, serviceid, auth_token)
+            self.service_connections[user] = connection
+        else:
+            connection = self.service_connections[user]
+
+        return connection
+
 
     async def create_linked_room(self, mxid, matrix_roomid, service_roomid, auth_mxid):
         """
@@ -353,7 +394,7 @@ class AppService:
         """
         if force or not await self.matrix_client.get_avatar_url(user_id) and image_url:
             # Download profile picture
-            async with self.client_session.request("GET", image_url) as resp:
+            async with self.http_session.request("GET", image_url) as resp:
                 data = await resp.read()
 
             # Upload to homeserver

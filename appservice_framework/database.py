@@ -75,7 +75,7 @@ class User(Base):
         'polymorphic_on': type
     }
 
-    nick = sa.Column(sa.String)
+    nick = sa.Column(sa.String, nullable=True)
     serviceid = sa.Column(sa.String)
     matrixid = sa.Column(sa.String)
 
@@ -85,7 +85,7 @@ class User(Base):
         back_populates="users")
 
 
-    def __init__(self, nick, matrixid, serviceid):
+    def __init__(self, matrixid, serviceid, nick=None):
         self.nick = nick
         self.serviceid = serviceid
         self.matrixid = matrixid
@@ -105,8 +105,8 @@ class AuthenticatedUser(User):
     auth_token = sa.Column(sa.String, nullable=True)
 
 
-    def __init__(self, nick, matrixid, serviceid, auth_token):
-        super().__init__(nick, matrixid, serviceid)
+    def __init__(self, matrixid, serviceid, auth_token, nick=None):
+        super().__init__(matrixid, serviceid, nick)
         self.auth_token = auth_token
 
 
