@@ -2,7 +2,7 @@
 Description=miniircd
 
 [Service]
-ExecStart=/opt/miniircd/miniircd
+ExecStart=/opt/miniircd/miniircd --log-file=/opt/miniircd/logs/miniircd.log --debug
 User=miniircd
 
 [Install]

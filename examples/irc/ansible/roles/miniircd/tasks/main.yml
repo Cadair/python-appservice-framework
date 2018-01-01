@@ -13,6 +13,12 @@
     name: miniircd
     state: present
 
+- name: Create logs directory
+  file:
+    path: /opt/miniircd/logs
+    state: directory
+    owner: miniircd
+
 - name: Install systemd service
   template:
     src: miniircd.service.j2

@@ -1,22 +1,43 @@
 from appservice_framework import AppService
-from asyncirc import irc
+# from asyncirc import irc
+import bottom
+import asyncio
+loop = asyncio.get_event_loop()
+loop.set_debug(True)
 
 apps = AppService("localhost:8008",
                   "localhost",
                   "wfghWEGh3wgWHEf3478sHFWE",
                   "@irc_.*",
                   "#irc_.*",
-                  "sqlite:///:memory:")
+                  "sqlite:///:memory:", loop=loop)
 
+async def recieve_message(**kwargs):
+    print(kwargs)
+    await apps.relay_service_message(userid, roomid, message, None)
 
-@apps.service_connect_sync
-def connect_irc(apps, service_id):
-    """
-    Connect to irc.
-    """
+@apps.service_connect
+async def connect_irc(apps, serviceid, auth_token):
     print("Connecting to IRC...")
-    return irc.connect("localhost", 6667, use_ssl=False).join("#test1")
+    conn = bottom.Client("localhost", 6667, ssl=False, loop=loop)
+    @conn.on("client_connect")
+    def test(**kwargs):
+        print(kwargs)
+    await conn.connect()
+    print(conn.protocol)
+    conn.send("NICK", nick="matrix")
+    conn.send("USER", user="matrix", realname="apps")
+    conn.send('JOIN', channel="#test")
+    conn.send('PRIVMSG', target='#test', message="Hello")
+    conn.on("PRIVMSG")(recieve_message)
+    return conn
 
 
+
+
+import asyncio
+
+loop.run_until_complete(apps.add_authenticated_user("@irc:localhost", "matrix", ""))
+conn = apps.get_connection()
 
 apps.run()
