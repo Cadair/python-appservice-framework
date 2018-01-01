@@ -206,7 +206,7 @@ class AppService:
         self.service_events['connect'] = coro
         return coro
 
-    async def relay_service_message(self, service_userid, service_roomid, message, recieveing_serviceid=None):
+    async def relay_service_message(self, service_userid, service_roomid, message, receiving_serviceid=None):
         """
         Forward a message to matrix.
 
@@ -225,21 +225,23 @@ class AppService:
         """
         # TODO: Handle plain/HTML/markdown
 
-        room = self.dbsession.query(db.Room).filter(Room.serviceid == sroomid)
+        room = list(self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid))
+        if not room:
+            raise ValueError("No linked room exists for this room.")
 
         # receiving_serviceid is needed if there is more than one auth user in a room.
-        if not receving_serviceid and len(room.auth_users):
+        if not receiving_serviceid and len(room.auth_users):
             raise ValueError("If there is more than one "
                              "AuthenticatedUser in the room, the receiving_serviceid "
                              "must be specified.")
-        elif receving_serviceid:
+        elif receiving_serviceid:
             receiving_user = (self.dbsession.query(db.AuthenticatedUser)
                               .filter(AuthenticatedUser.serviceid == receiving_serviceid))
             # If the receiving user is not the frontier user, do nothing
             if room.frontier_user != receving_user:
                 return
 
-        user = self.dbsession.query(db.User).filter(User.serviceid == suserid)
+        user = self.dbsession.query(db.User).filter(User.serviceid == service_userid)
 
         if not user in room.users:
             raise ValueError("This room is apparently not in this room.")
@@ -368,6 +370,7 @@ class AppService:
         mxid = user.matrixid
         roomid = room.matrixid
 
+    # TODO: Need a synchronous call version of this
     async def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """
         Add an authenticated user to the appservice, and connect that user.
