@@ -34,7 +34,7 @@ class AppService:
         self.user_namespace = user_namespace
         self.room_namespace = room_namespace
 
-        self.dbsession = database.initialize(database_url)
+        self.dbsession = db.initialize(database_url)
 
         # Setup web server to listen for appservice calls
         self.app = aiohttp.web.Application(loop=self.loop)
@@ -52,13 +52,19 @@ class AppService:
 
         if not asyncio.iscoroutinefunction(call):
             @wraps(call)
-            def caller(*args, **kwargs):
-                self.loop.run_soon(partial(call, **kwargs), args)
+            async def caller(*args, **kwargs):
+                return call(*args, **kwargs)
 
             return caller
 
         else:
             return call
+
+    def _run_async(self, function, *args, **kwargs):
+        """
+        Run a function using the event loop.
+        """
+        return self.loop.run_soon(partial(call, **kwargs), args)
 
     ######################################################################################
     # Appservice Web Server Handles
@@ -69,9 +75,10 @@ class AppService:
         Run the appservice.
         """
         for user in self.dbsession.query(db.AuthenticatedUser):
-            connection = self.service_events['connect'](self, user.serviceid, user.auth_token)
-            if connection:
-                self.service_connections[user] = connection
+            if user not in self.service_connections:
+                connection = self.service_events['connect'](self, user.serviceid, user.auth_token)
+                if connection:
+                    self.service_connections[user] = connection
 
         aiohttp.web.run_app(self.app, host=host, port=port)
 
@@ -196,79 +203,49 @@ class AppService:
         """
         coro = self._make_async(coro)
 
-        async def connect_service():
-            self.service = await coro(self)
+        self.service_events['connect'] = coro
+        return coro
 
-        self.service_events['connect'] = connect_service
-
-        return connect_service
-
-    def service_connect_sync(self, func):
+    async def relay_service_message(self, service_userid, service_roomid, message, recieveing_serviceid=None):
         """
-        Connect to the service synchronously.
+        Forward a message to matrix.
 
-        func(appservice, serviceid, auth_token)
+        Parameters
+        ----------
+        service_userid : `str`
+            Service User ID
+        service_roomid : `str`
+            Service Room ID
+        message : `str`
+            Message to relay.
+        receiving_serviceid : `str`
+            The service user id of the receiving account. Can be `None`
+            if there is only one authenticated user in the room.a
 
-        Returns:
-            `service` an object representing the connection, becomes ``appservice.service``.
-        """
-        if 'connect' in self.service_events.keys():
-            raise ValueError("Please define either connect or connect_sync not both.")
-
-        def connect_service():
-            self.service = func(self)
-
-        self.service_events['connect_sync'] = connect_service
-
-        return connect_service
-
-    def service_recieve_message(self, coro):
-        """
-        Decorator for when an authenticated user receives a message.
-
-        coro(appservice, receiving_serviceid=None)
-
-        Parameters:
-            receiving_serviceid : `str`
-                The service user id of the receiving account. Must be specified
-                if there are more than one authenticated user in the room.
-
-        Returns:
-            service_userid : `str`
-            service_roomid : `str`
-            message : `str`
         """
         # TODO: Handle plain/HTML/markdown
 
-        @wraps(coro)
-        async def caller(appservice, receving_serviceid=None):
-            suserid, sroomid, message = await coro(appservice)
-            room = self.dbsession.query(db.Room).filter(Room.serviceid == sroomid)
+        room = self.dbsession.query(db.Room).filter(Room.serviceid == sroomid)
 
-            # receiving_serviceid is needed if there is more than one auth user in a room.
-            if not receving_serviceid and len(room.auth_users):
-                raise ValueError("If there is more than one "
-                                 "AuthenticatedUser in the room, the receiving_serviceid "
-                                 "must be specified.")
-            elif receving_serviceid:
-                receiving_user = (self.dbsession.query(db.AuthenticatedUser)
-                                  .filter(AuthenticatedUser.serviceid == receiving_serviceid))
-                # If the receiving user is not the frontier user, do nothing
-                if room.frontier_user != receving_user:
-                    return
+        # receiving_serviceid is needed if there is more than one auth user in a room.
+        if not receving_serviceid and len(room.auth_users):
+            raise ValueError("If there is more than one "
+                             "AuthenticatedUser in the room, the receiving_serviceid "
+                             "must be specified.")
+        elif receving_serviceid:
+            receiving_user = (self.dbsession.query(db.AuthenticatedUser)
+                              .filter(AuthenticatedUser.serviceid == receiving_serviceid))
+            # If the receiving user is not the frontier user, do nothing
+            if room.frontier_user != receving_user:
+                return
 
-            user = self.dbsession.query(db.User).filter(User.serviceid == suserid)
+        user = self.dbsession.query(db.User).filter(User.serviceid == suserid)
 
-            if not user in room.users:
-                raise ValueError("This room is apparently not in this room.")
+        if not user in room.users:
+            raise ValueError("This room is apparently not in this room.")
 
-            result = await appservice.matrix_send_message(user, room, message)
+        result = await appservice.matrix_send_message(user, room, message)
 
-            return result
-
-        self.service_events['recieve_message'] = caller
-
-        return coro
 
     def service_room_exists(self, coro):
         """
@@ -345,6 +322,32 @@ class AppService:
     ######################################################################################
     # Public Appservice Methods
     ######################################################################################
+
+    def get_connection(self, serviceid=None):
+        """
+        Get the connection object for a given user.
+
+        Parameters
+        ----------
+        serviceid : `str`
+            The service user id for the connection.
+
+        Returns
+        -------
+        connection : `object`
+            The connection object as returned by ``@appservice.service_connect.
+        """
+
+        if not serviceid:
+            if len(self.service_connections) > 1:
+                raise ValueError("serviceid must be specified if there are more than one connections.")
+            else:
+                return list(self.service_connections.values())[0]
+        else:
+            authuser = self.dbsession.query(db.User).filter(User.serviceid == serviceid)
+            return self.service_connections[authuser]
+
+
 
     async def matrix_send_message(self, user, room, message):
         """
