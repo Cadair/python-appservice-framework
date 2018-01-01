@@ -226,25 +226,55 @@ class AppService:
         """
         Decorator for when an authenticated user receives a message.
 
-        coro(appservice)
+        coro(appservice, receiving_serviceid=None)
+
+        Parameters:
+            receiving_serviceid : `str`
+                The service user id of the receiving account. Must be specified
+                if there are more than one authenticated user in the room.
 
         Returns:
             service_userid : `str`
             service_roomid : `str`
-            message_plain : `str`
+            message : `str`
         """
         # TODO: Handle plain/HTML/markdown
-        # TODO: Frontier user filtering
 
-        self.service_events['recieve_message'] = coro
+        @wraps(coro)
+        async def caller(appservice, receving_serviceid=None):
+            suserid, sroomid, message = await coro(appservice)
+            room = self.dbsession.query(db.Room).filter(Room.serviceid == sroomid)
+
+            # receiving_serviceid is needed if there is more than one auth user in a room.
+            if not receving_serviceid and len(room.auth_users):
+                raise ValueError("If there is more than one "
+                                 "AuthenticatedUser in the room, the receiving_serviceid "
+                                 "must be specified.")
+            elif receving_serviceid:
+                receiving_user = (self.dbsession.query(db.AuthenticatedUser)
+                                  .filter(AuthenticatedUser.serviceid == receiving_serviceid))
+                # If the receiving user is not the frontier user, do nothing
+                if room.frontier_user != receving_user:
+                    return
+
+            user = self.dbsession.query(db.User).filter(User.serviceid == suserid)
+
+            if not user in room.users:
+                raise ValueError("This room is apparently not in this room.")
+
+            result = await appservice.matrix_send_message(user, room, message)
+
+            return result
+
+        self.service_events['recieve_message'] = caller
 
         return coro
 
     def service_room_exists(self, coro):
         """
-        Decorator to query if a matrix room alias exists.
+        Decorator to query if a service room exists.
 
-        coro(appservice, matrix_room_alias)
+        coro(appservice, service_roomid)
         """
         self.service_events['room_exists'] = coro
 
@@ -315,6 +345,25 @@ class AppService:
     ######################################################################################
     # Public Appservice Methods
     ######################################################################################
+
+    async def matrix_send_message(self, user, room, message):
+        """
+        Send a message to a matrix room as a matrix user.
+
+        Parameters
+        ----------
+
+        user : `appservice_framework.database.User`
+            The user to send the message as.
+
+        room : `appservice_framework.database.Room`
+            The Room to send the message to.
+
+        message : `str`
+            The message to send.
+        """
+        mxid = user.matrixid
+        roomid = room.matrixid
 
     async def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """

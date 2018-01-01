@@ -25,7 +25,7 @@ class Room(Base):
         'polymorphic_identity': 'admin',
         'polymorphic_on': type
     }
-    matrix_roomid = sa.Column(sa.String)
+    matrixid = sa.Column(sa.String)
     active = sa.Column(sa.Boolean)
 
     users = relationship(
@@ -38,9 +38,13 @@ class Room(Base):
         sa.Integer, sa.ForeignKey("auth_user.id"), nullable=True)
     frontier_user = relationship("AuthenticatedUser")
 
-    def __init__(self, matrix_roomid, active=True):
-        self.matrix_roomid = matrix_roomid
+    def __init__(self, matrixid, active=True):
+        self.matrixid = matrixid
         self.active = active
+
+    @property
+    def auth_users(self):
+        return list(filter(lambda x: isinstance(x, AuthenticatedUser), self.users))
 
 
 class LinkedRoom(Room):
@@ -53,12 +57,12 @@ class LinkedRoom(Room):
     }
 
     id = sa.Column(sa.Integer, sa.ForeignKey('room.id'), primary_key=True)
-    service_roomid = sa.Column(sa.String)
+    serviceid = sa.Column(sa.String)
 
 
-    def __init__(self, matrix_roomid, service_roomid, active=True):
-        super().__init__(matrix_roomid, active=active)
-        self.service_roomid = service_roomid
+    def __init__(self, matrixid, serviceid, active=True):
+        super().__init__(matrixid, active=active)
+        self.serviceid = serviceid
 
 
 class User(Base):
