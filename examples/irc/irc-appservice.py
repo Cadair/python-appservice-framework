@@ -31,10 +31,11 @@ async def connect_irc(apps, serviceid, auth_token):
     return conn
 
 
-apps.add_authenticated_user("@irc:localhost", "matrix", "")
+user1 = apps.add_authenticated_user("@irc:localhost", "matrix", "")
 
 # Use a context manager to ensure clean shutdown.
 with apps.run() as run_forever:
+    room = apps.create_linked_room(user1, "#irc_#test:localhost", "#test")
     conn = apps.get_connection(wait_for_connect=True)
 
     @conn.on("PRIVMSG")
@@ -42,6 +43,9 @@ with apps.run() as run_forever:
         userid = kwargs['nick']
         roomid = kwargs['target']
         message = kwargs['message']
+        print(message, roomid, userid)
+        await apps.create_matrix_user(userid, matrix_roomid=f"#irc_{roomid}:localhost")
         await apps.relay_service_message(userid, roomid, message, None)
+
 
     run_forever()

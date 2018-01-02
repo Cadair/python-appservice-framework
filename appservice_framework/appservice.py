@@ -237,49 +237,6 @@ class AppService:
         self.service_events['connect'] = coro
         return coro
 
-    async def relay_service_message(self, service_userid, service_roomid, message, receiving_serviceid=None):
-        """
-        Forward a message to matrix.
-
-        Parameters
-        ----------
-        service_userid : `str`
-            Service User ID
-        service_roomid : `str`
-            Service Room ID
-        message : `str`
-            Message to relay.
-        receiving_serviceid : `str`
-            The service user id of the receiving account. Can be `None`
-            if there is only one authenticated user in the room.a
-
-        """
-        # TODO: Handle plain/HTML/markdown
-
-        room = list(self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid))
-        if not room:
-            raise ValueError("No linked room exists for this room.")
-
-        # receiving_serviceid is needed if there is more than one auth user in a room.
-        if not receiving_serviceid and len(room.auth_users):
-            raise ValueError("If there is more than one "
-                             "AuthenticatedUser in the room, the receiving_serviceid "
-                             "must be specified.")
-        elif receiving_serviceid:
-            receiving_user = (self.dbsession.query(db.AuthenticatedUser)
-                              .filter(AuthenticatedUser.serviceid == receiving_serviceid))
-            # If the receiving user is not the frontier user, do nothing
-            if room.frontier_user != receving_user:
-                return
-
-        user = self.dbsession.query(db.User).filter(User.serviceid == service_userid)
-
-        if not user in room.users:
-            raise ValueError("This room is apparently not in this room.")
-
-        result = await appservice.matrix_send_message(user, room, message)
-
-
     def service_room_exists(self, coro):
         """
         Decorator to query if a service room exists.
@@ -437,9 +394,91 @@ class AppService:
         mxid = user.matrixid
         roomid = room.matrixid
 
-        resp = await self.api.send_message(roomid,
-                                           message,
-                                           user_id=mxid)
+        # resp = await self.api.send_message(roomid,
+        #                                    message,
+        #                                    user_id=mxid)
+
+    async def create_matrix_user(self, service_userid, matrix_userid=None, matrix_roomid=None):
+        """
+        Create a matrix user within the appservice namespace for a service user.
+
+        Parameters
+        ----------
+        service_userid : `str`
+            The service id of the user.
+
+        matrix_userid : `str` (optional)
+            The matrix userid of the user. If not specified one will be created
+            following the template ``{prefix}{service_userid}{server_name}``
+            where ``prefix`` is based on the appservice user namespace.
+
+        matrix_roomid : `str` (optional)
+            If specified add the user to the matrix room matching this id.
+
+        """
+
+        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one_or_none()
+        if user:
+            return
+
+        prefix = self.room_namespace.split(".*")[0]
+        if not matrix_userid:
+            matrix_userid = f"{prefix}{service_userid}{self.server_name}"
+        user = db.User(matrix_userid, service_userid)
+        self.dbsession.add(user)
+        if matrix_roomid:
+            room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixid == matrix_roomid).one()
+            room.users.append(user)
+
+
+        self.dbsession.commit()
+
+        # TODO: Make matrix user
+
+
+
+    async def relay_service_message(self, service_userid, service_roomid, message, receiving_serviceid=None):
+        """
+        Forward a message to matrix.
+
+        Parameters
+        ----------
+        service_userid : `str`
+            Service User ID
+        service_roomid : `str`
+            Service Room ID
+        message : `str`
+            Message to relay.
+        receiving_serviceid : `str`
+            The service user id of the receiving account. Can be `None`
+            if there is only one authenticated user in the room.a
+
+        """
+        # TODO: Handle plain/HTML/markdown
+
+        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid)
+        if not room.count():
+            raise ValueError("No linked room exists for this room.")
+        room = room.one()
+
+        # receiving_serviceid is needed if there is more than one auth user in a room.
+        if not receiving_serviceid and len(room.auth_users) > 1:
+            raise ValueError("If there is more than one "
+                             "AuthenticatedUser in the room, the receiving_serviceid "
+                             "must be specified.")
+        elif receiving_serviceid:
+            receiving_user = (self.dbsession.query(db.AuthenticatedUser)
+                              .filter(AuthenticatedUser.serviceid == receiving_serviceid))
+            # If the receiving user is not the frontier user, do nothing
+            if room.frontier_user != receving_user:
+                return
+
+        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+
+        if not user in room.users:
+            raise ValueError("The user {} is apparently not in this room.".format(service_userid))
+
+        result = await self.matrix_send_message(user, room, message)
 
     def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """
@@ -473,17 +512,26 @@ class AppService:
         user = db.AuthenticatedUser(matrixid, serviceid, auth_token, nick=nick)
         self.dbsession.add(user)
         self.dbsession.commit()
+        return user
 
-
-    async def create_linked_room(self, mxid, matrix_roomid, service_roomid, auth_mxid):
+    def create_linked_room(self, auth_user, matrix_roomid, service_roomid):
         """
         Create a linked room.
 
         This method will create a link between a service room for a single
-        authenticated user (others can be added afterwards) and a matrix room.
+        authenticated user (which will become the frontier user) and a matrix room.
 
         Will not do anything if room is already linked.
         """
+
+        # TODO: This should check if the matrix room exists etc.
+        room = db.LinkedRoom(matrix_roomid, service_roomid)
+        room.users.append(auth_user)
+        room.frontier_user = auth_user
+        self.dbsession.add(room)
+        self.dbsession.commit()
+
+        return room
 
     async def linked_room_exists(self, matrix_roomid=None, service_roomid=None):
         """
