@@ -96,14 +96,14 @@ class AppService:
 
         for user in self.dbsession.query(db.AuthenticatedUser):
             if user not in self.service_connections:
-                connection = self.service_events['connect'](self, user.serviceid, user.auth_token)
+                connection = asyncio.ensure_future(self.service_events['connect'](self, user.serviceid, user.auth_token))
                 if connection:
                     self.service_connections[user] = connection
 
         # TODO: This should manually start the webapp.
         # The object yielded here should have a `run_forever` method that actually blocks.
         # Rather than making the context manager block.
-        yield aiohttp.web.run_app(self.app, host=host, port=port)
+        yield partial(aiohttp.web.run_app, self.app, host=host, port=port)
 
         for connection in self.service_connections.values():
             if hasattr(connection, "close"):
@@ -356,7 +356,7 @@ class AppService:
     # Public Appservice Methods
     ######################################################################################
 
-    def get_connection(self, serviceid=None):
+    def get_connection(self, serviceid=None, wait_for_connect=False):
         """
         Get the connection object for a given user.
 
@@ -365,21 +365,30 @@ class AppService:
         serviceid : `str`
             The service user id for the connection.
 
+        wait_for_connect : `bool` (optional, default `False`)
+            If `True` this function will block until the connection is made, if
+            `False` it will return the `asyncio.Task` object for the connection
+            attempt.
+
         Returns
         -------
-        connection : `object`
+        connection : `object` or `asyncio.Task`
             The connection object as returned by ``@appservice.service_connect.
         """
 
         if not serviceid:
             if len(self.service_connections) > 1:
-                raise ValueError("serviceid must be specified if there are more than one connections.")
+                raise ValueError("serviceid must be specified if there are more than one connection.")
             else:
-                return list(self.service_connections.values())[0]
+                connection = list(self.service_connections.values())[0]
         else:
             authuser = self.dbsession.query(db.User).filter(User.serviceid == serviceid)
-            return self.service_connections[authuser]
+            connection = self.service_connections[authuser]
 
+        if wait_for_connect:
+            return self.loop.run_until_complete(connection)
+        else:
+            return connection
 
 
     async def matrix_send_message(self, user, room, message):
@@ -401,10 +410,11 @@ class AppService:
         mxid = user.matrixid
         roomid = room.matrixid
 
-    # TODO: Need a synchronous call version of this
-    async def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
+    def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """
-        Add an authenticated user to the appservice, and connect that user.
+        Add an authenticated user to the appservice.
+
+        This user will connect when the appservice is run.
 
         Parameters
         ----------
@@ -432,14 +442,6 @@ class AppService:
         user = db.AuthenticatedUser(matrixid, serviceid, auth_token, nick=nick)
         self.dbsession.add(user)
         self.dbsession.commit()
-
-        if user not in self.service_connections:
-            connection = await self.service_events['connect'](self, serviceid, auth_token)
-            self.service_connections[user] = connection
-        else:
-            connection = self.service_connections[user]
-
-        return connection
 
 
     async def create_linked_room(self, mxid, matrix_roomid, service_roomid, auth_mxid):

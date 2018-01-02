@@ -15,30 +15,33 @@ apps = AppService("localhost:8008",
 @apps.service_connect
 async def connect_irc(apps, serviceid, auth_token):
     print("Connecting to IRC...")
+
     conn = bottom.Client("localhost", 6667, ssl=False, loop=loop)
-    @conn.on("client_connect")
-    def test(**kwargs):
-        print(kwargs)
     await conn.connect()
-    print(conn.protocol)
+
     conn.send("NICK", nick="matrix")
     conn.send("USER", user="matrix", realname="apps")
+
+    # Temp join for testing
     conn.send('JOIN', channel="#test")
+
+    # Tempt send for testing
     conn.send('PRIVMSG', target='#test', message="Hello")
+
     return conn
 
 
-loop.run_until_complete(apps.add_authenticated_user("@irc:localhost", "matrix", ""))
-conn = apps.get_connection()
-
-@conn.on("PRIVMSG")
-async def recieve_message(**kwargs):
-    userid = kwargs['nick']
-    roomid = kwargs['target']
-    message = kwargs['message']
-    await apps.relay_service_message(userid, roomid, message, None)
+apps.add_authenticated_user("@irc:localhost", "matrix", "")
 
 # Use a context manager to ensure clean shutdown.
-# We can't actually do anything in the context manager.
-with apps.run():
-    pass
+with apps.run() as run_forever:
+    conn = apps.get_connection(wait_for_connect=True)
+
+    @conn.on("PRIVMSG")
+    async def recieve_message(**kwargs):
+        userid = kwargs['nick']
+        roomid = kwargs['target']
+        message = kwargs['message']
+        await apps.relay_service_message(userid, roomid, message, None)
+
+    run_forever()
