@@ -390,6 +390,33 @@ class AppService:
         else:
             return connection
 
+    def get_user(self, matrixid=None, serviceid=None):
+        """
+        Get a `appservice_framework.database.User` object based on IDs.
+        """
+        if not (matrixid or serviceid):
+            raise ValueError("Either matrixid or serviceid must be specified.")
+
+        if matrixid:
+            filterexp = db.User.matrixid == matrixid
+        if serviceid:
+            filterexp = db.User.serviceid = serviceid
+
+        return self.dbsession.query(db.User).filter(filterexp)
+
+    def get_room(self, matrixid=None, serviceid=None):
+        """
+        Get a `appservice_framework.database.Room` object based on IDs.
+        """
+        if not (matrixid or serviceid):
+            raise ValueError("Either matrixid or serviceid must be specified.")
+
+        if matrixid:
+            filterexp = db.Room.matrixid == matrixid
+        if serviceid:
+            filterexp = db.Room.serviceid = serviceid
+
+        return self.dbsession.query(db.Room).filter(filterexp)
 
     async def matrix_send_message(self, user, room, message):
         """
@@ -409,6 +436,10 @@ class AppService:
         """
         mxid = user.matrixid
         roomid = room.matrixid
+
+        resp = await self.api.send_message(roomid,
+                                           message,
+                                           user_id=mxid)
 
     def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """
