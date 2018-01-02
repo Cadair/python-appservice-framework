@@ -423,19 +423,16 @@ class AppService:
 
         prefix = self.room_namespace.split(".*")[0]
         if not matrix_userid:
-            matrix_userid = f"{prefix}{service_userid}{self.server_name}"
+            matrix_userid = f"{prefix}{service_userid}:{self.server_name}"
         user = db.User(matrix_userid, service_userid)
         self.dbsession.add(user)
         if matrix_roomid:
             room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixid == matrix_roomid).one()
             room.users.append(user)
 
-
         self.dbsession.commit()
 
         # TODO: Make matrix user
-
-
 
     async def relay_service_message(self, service_userid, service_roomid, message, receiving_serviceid=None):
         """
@@ -456,15 +453,14 @@ class AppService:
         """
         # TODO: Handle plain/HTML/markdown
 
-        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid)
-        if not room.count():
-            raise ValueError("No linked room exists for this room.")
-        room = room.one()
+        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid).one_or_none()
+        if not room:
+            raise ValueError("No linked room exists for the service room {}.".format(service_roomid))
 
         # receiving_serviceid is needed if there is more than one auth user in a room.
         if not receiving_serviceid and len(room.auth_users) > 1:
             raise ValueError("If there is more than one "
-                             "AuthenticatedUser in the room, the receiving_serviceid "
+                             "AuthenticatedUser in the room, then receiving_serviceid "
                              "must be specified.")
         elif receiving_serviceid:
             receiving_user = (self.dbsession.query(db.AuthenticatedUser)
@@ -476,9 +472,9 @@ class AppService:
         user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
 
         if not user in room.users:
-            raise ValueError("The user {} is apparently not in this room.".format(service_userid))
+            raise ValueError("The user '{}' has not been added to this room.".format(service_userid))
 
-        result = await self.matrix_send_message(user, room, message)
+        return await self.matrix_send_message(user, room, message)
 
     def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
         """
