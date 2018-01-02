@@ -28,10 +28,6 @@ async def connect_irc(apps, serviceid, auth_token):
     return conn
 
 
-
-
-import asyncio
-
 loop.run_until_complete(apps.add_authenticated_user("@irc:localhost", "matrix", ""))
 conn = apps.get_connection()
 
@@ -42,4 +38,7 @@ async def recieve_message(**kwargs):
     message = kwargs['message']
     await apps.relay_service_message(userid, roomid, message, None)
 
-apps.run()
+# Use a context manager to ensure clean shutdown.
+# We can't actually do anything in the context manager.
+with apps.run():
+    pass

@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from functools import wraps, partial
 
 import aiohttp
@@ -26,9 +27,10 @@ class AppService:
         else:
             self.loop = asyncio.get_event_loop()
 
-        self.http_session = aiohttp.ClientSession(loop=self.loop)
-        self.api = AsyncHTTPAPI(matrix_server, self.http_session, access_token)
+        self._http_session = None
+        self._api = None
 
+        self.matrix_server = matrix_server
         self.access_token = access_token
         self.server_name = server_domain
         self.user_namespace = user_namespace
@@ -47,6 +49,20 @@ class AppService:
 
         # Keep a mapping of service connections
         self.service_connections = {}
+
+    @property
+    def http_session(self):
+        if self._http_session is None:
+            raise AttributeError("the http_session attribute can only be used from within the `AppService.run` context manager")
+        else:
+            return self._http_session
+
+    @property
+    def api(self):
+        if self._api is None:
+            raise AttributeError("the run attribute can only be used from within the `AppService.run` context manager")
+        else:
+            return self._api
 
     def _make_async(self, call):
 
@@ -70,17 +86,32 @@ class AppService:
     # Appservice Web Server Handles
     ######################################################################################
 
+    @contextmanager
     def run(self, host="127.0.0.1", port=5000):
         """
         Run the appservice.
         """
+        self._http_session = aiohttp.ClientSession(loop=self.loop)
+        self._api = AsyncHTTPAPI(self.matrix_server, self.http_session, self.access_token)
+
         for user in self.dbsession.query(db.AuthenticatedUser):
             if user not in self.service_connections:
                 connection = self.service_events['connect'](self, user.serviceid, user.auth_token)
                 if connection:
                     self.service_connections[user] = connection
 
-        aiohttp.web.run_app(self.app, host=host, port=port)
+        # TODO: This should manually start the webapp.
+        # The object yielded here should have a `run_forever` method that actually blocks.
+        # Rather than making the context manager block.
+        yield aiohttp.web.run_app(self.app, host=host, port=port)
+
+        for connection in self.service_connections.values():
+            if hasattr(connection, "close"):
+                connection.close()
+
+        self._api = None
+        self._http_session.close()
+        self._http_session = None
 
     def _routes(self):
         """
