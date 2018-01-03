@@ -9,64 +9,10 @@ from functools import wraps
 from matrix_client.api import MatrixHttpApi
 from matrix_client.errors import MatrixError, MatrixRequestError
 
-
-def has_var_keyword(sig):
-    for param in sig.parameters.values():
-        if param.kind == param.VAR_KEYWORD:
-            return True
-    return False
+__all__ = ['AsyncHTTPAPI']
 
 
-def keyword_names(sig):
-    names = []
-    for param in sig.parameters.values():
-        if (param.kind == param.KEYWORD_ONLY or
-            (param.kind == param.POSITIONAL_OR_KEYWORD and
-             param.default != param.empty)):
-            names.append(param.name)
-    return names
-
-
-class AppserviceMixin:
-    """
-    Modify methods of the API so that if ``query_params`` is accepted, add a
-    ``user_id`` argument to the function which gets added to the
-    ``query_parms`` dict.
-    """
-
-    @staticmethod
-    def wrap(func):
-        sig = inspect.signature(func)
-
-        if "query_params" not in sig.parameters:
-            return func
-
-        names = keyword_names(sig)
-
-        @wraps(func)
-        def caller(*args, **kwargs):
-            query_params = kwargs.pop("query_params", {})
-
-            if "user_id" in kwargs and kwargs['user_id']:
-                user_id = kwars.pop("user_id")
-                query_params["user_id"] = user_id
-
-            return func(*args, query_params=query_params, **kwargs)
-
-        params = list(sig.parameters.values())
-        params.append(inspect.Parameter(name="user_id", kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None))
-        caller.__signature__ = sig.replace(parameters=params)
-        return caller
-
-    def __getattribute__(self, attr):
-        result = super().__getattribute__(attr)
-
-        if inspect.ismethod(result):
-            return self.wrap(result)
-        return result
-
-
-class AsyncASAPI(AppserviceMixin, MatrixHttpApi):
+class AsyncHTTPAPI(MatrixHttpApi):
     """
     Contains all raw matrix HTTP client-server API calls using asyncio and coroutines.
 
@@ -152,3 +98,68 @@ class AsyncASAPI(AppserviceMixin, MatrixHttpApi):
             "/directory/room/{}".format(quote(room_alias)),
             api_path="/_matrix/client/r0")
         return content.get("room_id", None)
+
+"""
+Here be dragons.
+"""
+
+def has_var_keyword(sig):
+    for param in sig.parameters.values():
+        if param.kind == param.VAR_KEYWORD:
+            return True
+    return False
+
+
+def keyword_names(sig):
+    names = []
+    for param in sig.parameters.values():
+        if (param.kind == param.KEYWORD_ONLY or
+            (param.kind == param.POSITIONAL_OR_KEYWORD and
+             param.default != param.empty)):
+            names.append(param.name)
+    return names
+
+
+class AppserviceMixin:
+    """
+    Modify methods of the API so that if ``query_params`` is accepted, add a
+    ``user_id`` argument to the function which gets added to the
+    ``query_parms`` dict.
+    """
+
+    @staticmethod
+    def wrap(func):
+        sig = inspect.signature(func)
+
+        if "query_params" not in sig.parameters:
+            return func
+
+        names = keyword_names(sig)
+
+        @wraps(func)
+        def caller(*args, **kwargs):
+            query_params = kwargs.pop("query_params", {})
+
+            if "user_id" in kwargs and kwargs['user_id']:
+                user_id = kwargs.pop("user_id")
+                query_params["user_id"] = user_id
+
+            return func(*args, query_params=query_params, **kwargs)
+
+        params = list(sig.parameters.values())
+        params.append(inspect.Parameter(name="user_id",
+                                        kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                        default=None))
+        caller.__signature__ = sig.replace(parameters=params)
+        return caller
+
+    def __getattribute__(self, attr):
+        result = super().__getattribute__(attr)
+
+        if inspect.ismethod(result):
+            return self.wrap(result)
+        return result
+
+
+class AsyncASAPI(AppserviceMixin, AsyncHTTPAPI):
+    pass
