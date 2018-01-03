@@ -5,7 +5,7 @@ import asyncio
 loop = asyncio.get_event_loop()
 loop.set_debug(True)
 
-apps = AppService("localhost:8008",
+apps = AppService("http://localhost:8008",
                   "localhost",
                   "wfghWEGh3wgWHEf3478sHFWE",
                   "@irc_.*",
@@ -31,7 +31,7 @@ async def connect_irc(apps, serviceid, auth_token):
     return conn
 
 
-user1 = apps.add_authenticated_user("@irc:localhost", "matrix", "")
+user1 = apps.add_authenticated_user("@admin:localhost", "matrix", "")
 
 # Use a context manager to ensure clean shutdown.
 with apps.run() as run_forever:

@@ -6,7 +6,7 @@ import aiohttp
 import aiohttp.web
 
 from . import database as db
-from .matrix_api import AsyncASAPI
+from .matrix_api import AsyncHTTPAPI as MatrixAPI
 
 
 __all__ = ['AppService']
@@ -92,7 +92,7 @@ class AppService:
         Run the appservice.
         """
         self._http_session = aiohttp.ClientSession(loop=self.loop)
-        self._api = AsyncASAPI(self.matrix_server, self.http_session, self.access_token)
+        self._api = MatrixAPI(self.matrix_server, self.http_session, self.access_token)
 
         for user in self.dbsession.query(db.AuthenticatedUser):
             if user not in self.service_connections:
@@ -395,9 +395,9 @@ class AppService:
         mxid = user.matrixid
         roomid = room.matrixid
 
-        # resp = await self.api.send_message(roomid,
-        #                                    message,
-        #                                    user_id=mxid)
+        resp = await self.api.send_message(roomid,
+                                           message,
+                                           query_params={'user_id': mxid})
 
     async def create_matrix_user(self, service_userid, matrix_userid=None, matrix_roomid=None):
         """
