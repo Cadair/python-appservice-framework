@@ -6,7 +6,7 @@ import aiohttp
 import aiohttp.web
 
 from . import database as db
-from .matrix_api import AsyncHTTPAPI
+from .matrix_api import AsyncASAPI
 
 
 __all__ = ['AppService']
@@ -92,7 +92,7 @@ class AppService:
         Run the appservice.
         """
         self._http_session = aiohttp.ClientSession(loop=self.loop)
-        self._api = AsyncHTTPAPI(self.matrix_server, self.http_session, self.access_token)
+        self._api = AsyncASAPI(self.matrix_server, self.http_session, self.access_token)
 
         for user in self.dbsession.query(db.AuthenticatedUser):
             if user not in self.service_connections:

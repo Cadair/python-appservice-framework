@@ -2,14 +2,68 @@
 This is a asyncio wrapper for the matrix API class.
 """
 import json
+import inspect
 from asyncio import sleep
-from urllib.parse import quote
+from functools import wraps
 
 from matrix_client.api import MatrixHttpApi
 from matrix_client.errors import MatrixError, MatrixRequestError
 
 
-class AsyncHTTPAPI(MatrixHttpApi):
+def has_var_keyword(sig):
+    for param in sig.parameters.values():
+        if param.kind == param.VAR_KEYWORD:
+            return True
+    return False
+
+
+def keyword_names(sig):
+    names = []
+    for param in sig.parameters.values():
+        if (param.kind == param.KEYWORD_ONLY or
+            (param.kind == param.POSITIONAL_OR_KEYWORD and
+             param.default != param.empty)):
+            names.append(param.name)
+    return names
+
+
+class AppserviceMixin:
+    """
+    Convert ``user_id`` and ``ts`` arguments to ``query_params``.
+    """
+
+    @staticmethod
+    def wrap(func):
+        sig = inspect.signature(func)
+
+        if has_var_keyword(sig) or "query_params" not in sig.parameters:
+            return func
+
+        names = keyword_names(sig)
+
+        @wraps(func)
+        def caller(*args, **kwargs):
+            query_params = {}
+            for key in list(kwargs.keys()):
+                if key not in names:
+                    query_params[key] = kwargs.pop(key)
+            func(*args, query_params=query_params, **kwargs)
+
+        params = dict(sig.parameters)
+        p = params['query_params']
+        params['query_params'] = p.replace(kind=p.VAR_KEYWORD, default=p.empty)
+        caller.__signature__ = sig.replace(parameters=params.values())
+        return caller
+
+    def __getattribute__(self, attr):
+        result = super().__getattribute__(attr)
+
+        if inspect.ismethod(result):
+            return self.wrap(result)
+        return result
+
+
+class AsyncASAPI(AppserviceMixin, MatrixHttpApi):
     """
     Contains all raw matrix HTTP client-server API calls using asyncio and coroutines.
 
