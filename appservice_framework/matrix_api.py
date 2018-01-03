@@ -29,30 +29,33 @@ def keyword_names(sig):
 
 class AppserviceMixin:
     """
-    Convert ``user_id`` and ``ts`` arguments to ``query_params``.
+    Modify methods of the API so that if ``query_params`` is accepted, add a
+    ``user_id`` argument to the function which gets added to the
+    ``query_parms`` dict.
     """
 
     @staticmethod
     def wrap(func):
         sig = inspect.signature(func)
 
-        if has_var_keyword(sig) or "query_params" not in sig.parameters:
+        if "query_params" not in sig.parameters:
             return func
 
         names = keyword_names(sig)
 
         @wraps(func)
         def caller(*args, **kwargs):
-            query_params = {}
-            for key in list(kwargs.keys()):
-                if key not in names:
-                    query_params[key] = kwargs.pop(key)
-            func(*args, query_params=query_params, **kwargs)
+            query_params = kwargs.pop("query_params", {})
 
-        params = dict(sig.parameters)
-        p = params['query_params']
-        params['query_params'] = p.replace(kind=p.VAR_KEYWORD, default=p.empty)
-        caller.__signature__ = sig.replace(parameters=params.values())
+            if "user_id" in kwargs and kwargs['user_id']:
+                user_id = kwars.pop("user_id")
+                query_params["user_id"] = user_id
+
+            return func(*args, query_params=query_params, **kwargs)
+
+        params = list(sig.parameters.values())
+        params.append(inspect.Parameter(name="user_id", kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None))
+        caller.__signature__ = sig.replace(parameters=params)
         return caller
 
     def __getattribute__(self, attr):
