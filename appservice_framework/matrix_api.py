@@ -1,5 +1,9 @@
+"""
+This is a asyncio wrapper for the matrix API class.
+"""
 import json
 from asyncio import sleep
+from urllib.parse import quote
 
 from matrix_client.api import MatrixHttpApi
 from matrix_client.errors import MatrixError, MatrixRequestError
@@ -28,8 +32,13 @@ class AsyncHTTPAPI(MatrixHttpApi):
         self.validate_cert = True
         self.client_session = client_session
 
-    async def _send(self, method, path, content=None, query_params={}, headers={},
-                    api_path="/_matrix/client/api/v1"):
+    async def _send(self,
+                    method,
+                    path,
+                    content=None,
+                    query_params={},
+                    headers={},
+                    api_path="/_matrix/client/r0"):
         if not content:
             content = {}
 
@@ -48,15 +57,16 @@ class AsyncHTTPAPI(MatrixHttpApi):
             content = json.dumps(content)
 
         while True:
-            request = self.client_session.request(method, endpoint,
-                                                  params=query_params,
-                                                  data=content,
-                                                  headers=headers)
+            request = self.client_session.request(
+                method,
+                endpoint,
+                params=query_params,
+                data=content,
+                headers=headers)
             async with request as response:
                 if response.status < 200 or response.status >= 300:
                     raise MatrixRequestError(
-                        code=response.status, content=await response.text()
-                    )
+                        code=response.status, content=await response.text())
 
                 if response.status == 429:
                     await sleep(response.json()['retry_after_ms'] / 1000)
@@ -80,6 +90,8 @@ class AsyncHTTPAPI(MatrixHttpApi):
         Returns:
             Wanted room's id.
         """
-        content = await self._send("GET", "/directory/room/{}".format(quote(room_alias)),
-                                   api_path="/_matrix/client/r0")
+        content = await self._send(
+            "GET",
+            "/directory/room/{}".format(quote(room_alias)),
+            api_path="/_matrix/client/r0")
         return content.get("room_id", None)

@@ -6,7 +6,7 @@ import aiohttp
 import aiohttp.web
 
 from . import database as db
-from .async_matrix_api import AsyncHTTPAPI
+from .matrix_api import AsyncHTTPAPI
 
 
 __all__ = ['AppService']
@@ -96,7 +96,8 @@ class AppService:
 
         for user in self.dbsession.query(db.AuthenticatedUser):
             if user not in self.service_connections:
-                connection = asyncio.ensure_future(self.service_events['connect'](self, user.serviceid, user.auth_token))
+                connection = asyncio.ensure_future(
+                    self.service_events['connect'](self, user.serviceid, user.auth_token))
                 if connection:
                     self.service_connections[user] = connection
 
