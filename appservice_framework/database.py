@@ -25,7 +25,10 @@ class Room(Base):
         'polymorphic_identity': 'admin',
         'polymorphic_on': type
     }
+
     matrixid = sa.Column(sa.String)
+    matrixalias = sa.Column(sa.String)
+
     active = sa.Column(sa.Boolean)
     invite_only = sa.Column(sa.Boolean)
 
@@ -39,7 +42,8 @@ class Room(Base):
         sa.Integer, sa.ForeignKey("auth_user.id"), nullable=True)
     frontier_user = relationship("AuthenticatedUser")
 
-    def __init__(self, matrixid, active=True, invite_only=False):
+    def __init__(self, matrixalias, matrixid, active=True, invite_only=False):
+        self.matrixalias = matrixalias
         self.matrixid = matrixid
         self.active = active
         self.invite_only = invite_only
@@ -68,8 +72,8 @@ class LinkedRoom(Room):
     serviceid = sa.Column(sa.String)
 
 
-    def __init__(self, matrixid, serviceid, active=True, invite_only=False):
-        super().__init__(matrixid, active=active, invite_only=False)
+    def __init__(self, matrixalias, matrixid, serviceid, active=True, invite_only=False):
+        super().__init__(matrixalias, matrixid, active=active, invite_only=False)
         self.serviceid = serviceid
 
 

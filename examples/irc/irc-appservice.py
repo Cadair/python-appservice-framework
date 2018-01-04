@@ -36,6 +36,15 @@ async def connect_irc(apps, serviceid, auth_token):
     return conn
 
 
+@apps.matrix_recieve_message
+async def recieve_message(apps, auth_user, room, content):
+    """
+    """
+    print("##", auth_user, room, content)
+    conn = await apps.get_connection(wait_for_connect=False)
+    conn.send('PRIVMSG', target=room.serviceid, message=content['body'])
+
+
 user1 = apps.add_authenticated_user("@admin:localhost", "matrix", "")
 
 # Use a context manager to ensure clean shutdown.

@@ -21,7 +21,7 @@ formatter = logging.Formatter('%(asctime)s %(name)-12s %(levelname)-8s %(message
 handler.setFormatter(formatter)
 
 log.addHandler(handler)
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 __all__ = ['AppService']
 
@@ -168,11 +168,13 @@ class AppService:
         events = json["events"]
         for event in events:
             meth = self._matrix_event_dispatch.get(event['type'], None)
+            log.debug(meth)
             if meth:
                 try:
                     await meth(event)
                 except Exception as e:
-                    return aiohttp.web.Response(staus=500)
+                    log.exception("bad things happened")
+                    # return aiohttp.web.Response(status=500)
 
         return aiohttp.web.Response(body=b"{}")
 
@@ -180,7 +182,6 @@ class AppService:
         """
         Handle an Appservice room_alias call.
         """
-        return aiohttp.web.Response(status=200, body=b"{}")
         alias = request.match_info["alias"]
         room = self.get_room(matrixid=alias)
 
@@ -197,7 +198,7 @@ class AppService:
         return aiohttp.web.Response(status=404)
 
     ######################################################################################
-    # Internal Matrix Handlers
+    # Internal Matrix Handlers and Helpers
     ######################################################################################
 
     def _matrix_event_mapping(self):
@@ -217,9 +218,55 @@ class AppService:
         pass
 
     async def _matrix_message(self, event):
-        # TODO: If a message in a bridged room.
-        # TODO: If a message in an admin room.
-        log.debug(event)
+        user_id = event['user_id']
+        sender = event['sender']
+        room_id = event['room_id']
+
+        user = self.dbsession.query(db.User).filter(db.User.matrixid == user_id).one_or_none()
+        if not user:
+            log.error("message received with no matching user in the database")
+            return
+
+        room = self.dbsession.query(db.Room).filter(db.Room.matrixid == room_id).one_or_none()
+        if not room:
+            log.error("message received with no matching room in the database")
+            return
+
+        if not isinstance(room, db.LinkedRoom):
+            # Handle Bot Chat messages here.
+            return
+
+        if user not in room.users:
+            log.error("message received, but user is not in the room")
+            return
+
+        if isinstance(user, db.AuthenticatedUser):
+            auth_user = user
+        else:
+            # TODO: This needs to differentiate between matrix users that are
+            # not puppeted and AS users
+            return
+            # auth_user = room.frontier_user
+
+        await self.matrix_events['recieve_message'](self, auth_user, room, event['content'])
+
+
+    async def _invite_user(self, roomid, matrixid):
+        """
+        Invite to a room, but ignore errors if user is already in room.
+        """
+        try:
+            resp = await self.api.invite_user(roomid, matrixid,
+                                              query_params={'auth_token': self.api.token})
+        except MatrixRequestError as e:
+            content = json.loads(e.content)
+            if " is already in the room." not in content['error']:
+                raise e
+            else:
+                log.debug("User %s was already in the room.", matrixid)
+                return
+
+        return resp
 
     ######################################################################################
     # Matrix Event Decorators
@@ -229,7 +276,7 @@ class AppService:
         """
         A matrix 'm.room.message' event in a bridged room.
 
-        coro(appservice, event)
+        coro(appservice, auth_user, room, content)
         """
         self.matrix_events['recieve_message'] = coro
 
@@ -271,25 +318,35 @@ class AppService:
 
     def service_connect(self, coro):
         """
-        Connect to the service.
+        A decorator to register the connection function.
 
-        coro(appservice, serviceid, auth_token)
+        This function is called for every
+        `~appservice_framework.database.AuthenticatedUser` on ``run()``.
 
-        Returns:
-            `service` an object representing the connection, becomes ``appservice.service``.
+
+        **Function Signature**
+
+        ``coro(appservice, serviceid, auth_token)``
+
+        *Returns*
+
+        | `service` : `object`
+        |     An object representing the connection.
+
         """
-        coro = self._make_async(coro)
 
-        self.service_events['connect'] = coro
+        self.service_events['connect'] = self._make_async(coro)
+
         return coro
 
     def service_room_exists(self, coro):
         """
         Decorator to query if a service room exists.
 
-        coro(appservice, service_roomid)
+        ``coro(appservice, service_roomid)``
+
         """
-        self.service_events['room_exists'] = coro
+        self.service_events['room_exists'] = self._make_async(coro)
 
         return coro
 
@@ -297,7 +354,7 @@ class AppService:
         """
         Decorator for when an authenticated user joins a room.
 
-        coro(appservice)
+        ``coro(appservice)``
 
         Returns:
             service_userid : `str`
@@ -391,10 +448,10 @@ class AppService:
             The message to send.
         """
         mxid = user.matrixid
-        roomid = await self.get_room_id(room.matrixid)
-        return self.api.send_message(roomid,
-                                     message,
-                                     query_params={'user_id': mxid})
+        roomid = await self.get_room_id(room.matrixalias)
+        return await self.api.send_message(roomid,
+                                           message,
+                                           query_params={'user_id': mxid})
 
     async def create_matrix_user(self, service_userid, matrix_userid=None, matrix_roomid=None):
         """
@@ -568,7 +625,7 @@ class AppService:
             raise ValueError("Either matrixid or serviceid must be specified.")
 
         if matrixid:
-            filterexp = db.Room.matrixid == matrixid
+            filterexp = db.Room.matrixalias == matrixid
         if serviceid:
             filterexp = db.Room.serviceid = serviceid
 
@@ -694,26 +751,22 @@ class AppService:
 
         try:
             alias = matrix_roomid.split(':')[0][1:]
-            log.debug("Creating room {}".format(alilas))
-            await self.api.create_room(alias=alias,
-                                       is_public=self.config.invite_only_rooms,
-                                       invitees=(),
-                                       query_params={'auth_token': self.api.token})
+            log.debug("Creating room {}".format(alias))
+            resp = await self.api.create_room(alias=alias,
+                                              is_public=self.config.invite_only_rooms,
+                                              invitees=(),
+                                              query_params={'auth_token': self.api.token})
 
         except MatrixRequestError as e:
             content = json.loads(e.content)
             if content['error'] != "Room alias already taken":
                 raise e
 
-        # Invite the user to the room
-        try:
-            await self.api.invite_user(await self.get_room_id(matrix_roomid), auth_user.matrixid)
-        except MatrixRequestError as e:
-            content = json.loads(e.content)
-            if " is already in the room." not in content['error']:
-                raise e
+        roomid = await self.get_room_id(matrix_roomid)
+        # Invite the user to the room, but not if they are already in the room.
+        await self._invite_user(roomid, auth_user.matrixid)
 
-        room = db.LinkedRoom(matrix_roomid, service_roomid)
+        room = db.LinkedRoom(matrix_roomid, roomid, service_roomid)
         room.users.append(auth_user)
         room.frontier_user = auth_user
         self.dbsession.add(room)
@@ -743,21 +796,20 @@ class AppService:
         """
         log.debug("add {} to {}".format(matrix_userid, matrix_roomid))
         user = self.dbsession.query(db.User).filter(db.User.matrixid == matrix_userid).one()
-        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixid == matrix_roomid).one()
+        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixalias == matrix_roomid).one()
 
         if user in room.users:
             log.debug("user already in room")
             return
 
-        room_id = await self.get_room_id(room.matrixid)
+        room_id = await self.get_room_id(room.matrixalias)
         if isinstance(user, db.AuthenticatedUser):
-            await self.api.invite_user(room_id, user.matrixid)
+            await self._invite_user(room_id, user.matrixid)
             # TODO: We might need to only add the user to the room after the invite is accepted.
         else:
             # Invite here is for when the invite_only_rooms flag is set.
-            await self.api.invite_user(room_id, user.matrixid,
-                                       query_params={'auth_token': self.api.token})
-            await self.api.join_room(room.matrixid,
+            await self._invite_user(room_id, user.matrixid)
+            await self.api.join_room(room.matrixalias,
                                      query_params={'user_id': user.matrixid,
                                                    'auth_token': self.api.token})
 
