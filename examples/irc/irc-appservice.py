@@ -5,6 +5,8 @@ import asyncio
 loop = asyncio.get_event_loop()
 loop.set_debug(True)
 
+room = "#test12"
+
 apps = AppService("http://localhost:8008",
                   "localhost",
                   "wfghWEGh3wgWHEf3478sHFWE",
@@ -23,10 +25,10 @@ async def connect_irc(apps, serviceid, auth_token):
     conn.send("USER", user="matrix", realname="apps")
 
     # Temp join for testing
-    conn.send('JOIN', channel="#test")
+    conn.send('JOIN', channel=room)
 
     # Tempt send for testing
-    conn.send('PRIVMSG', target='#test', message="Hello")
+    conn.send('PRIVMSG', target=room, message="Hello")
 
     return conn
 
@@ -35,16 +37,18 @@ user1 = apps.add_authenticated_user("@admin:localhost", "matrix", "")
 
 # Use a context manager to ensure clean shutdown.
 with apps.run() as run_forever:
-    room = apps.create_linked_room(user1, "#irc_#test:localhost", "#test")
+    room = loop.run_until_complete(apps.create_linked_room(user1, f"#irc_{room}:localhost", room))
     conn = apps.get_connection(wait_for_connect=True)
 
     @conn.on("PRIVMSG")
     async def recieve_message(**kwargs):
         userid = kwargs['nick']
         roomid = kwargs['target']
+        print(roomid)
         message = kwargs['message']
         print(message, roomid, userid)
-        await apps.create_matrix_user(userid, matrix_roomid=f"#irc_{roomid}:localhost")
+        user = await apps.create_matrix_user(userid)
+        await apps.add_user_to_room(user.matrixid, f"#irc_{roomid}:localhost")
         await apps.relay_service_message(userid, roomid, message, None)
 
 

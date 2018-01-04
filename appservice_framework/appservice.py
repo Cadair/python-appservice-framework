@@ -1,9 +1,13 @@
+import json
 import asyncio
 from contextlib import contextmanager
 from functools import wraps, partial
+from urllib.parse import quote
 
 import aiohttp
 import aiohttp.web
+
+from matrix_client.errors import MatrixRequestError
 
 from . import database as db
 from .matrix_api import AsyncHTTPAPI as MatrixAPI
@@ -11,6 +15,8 @@ from .matrix_api import AsyncHTTPAPI as MatrixAPI
 
 __all__ = ['AppService']
 
+def jsonify(adict):
+    return json.dumps(adict).encode()
 
 class AppService:
     """
@@ -53,14 +59,16 @@ class AppService:
     @property
     def http_session(self):
         if self._http_session is None:
-            raise AttributeError("the http_session attribute can only be used from within the `AppService.run` context manager")
+            raise AttributeError("the http_session attribute can only be used "
+                                 "from within the `AppService.run` context manager")
         else:
             return self._http_session
 
     @property
     def api(self):
         if self._api is None:
-            raise AttributeError("the run attribute can only be used from within the `AppService.run` context manager")
+            raise AttributeError("the run attribute can only be used from "
+                                 "within the `AppService.run` context manager")
         else:
             return self._api
 
@@ -75,12 +83,6 @@ class AppService:
 
         else:
             return call
-
-    def _run_async(self, function, *args, **kwargs):
-        """
-        Run a function using the event loop.
-        """
-        return self.loop.run_soon(partial(call, **kwargs), args)
 
     ######################################################################################
     # Appservice Web Server Handles
@@ -143,6 +145,16 @@ class AppService:
         """
         Handle an Appservice room_alias call.
         """
+        return aiohttp.web.Response(status=200, body=b"{}")
+        alias = request.match_info["alias"]
+        print("_room_alias", alias)
+        room = self.get_room(matrixid=alias)
+        print(room)
+
+        if room:
+            print("room found")
+            return aiohttp.web.Response(status=200, body=b"{}")
+
         return aiohttp.web.Response(status=404)
 
     async def _query_userid(self, request):
@@ -311,6 +323,116 @@ class AppService:
         return profile_image
 
     ######################################################################################
+    # Matrix Helper Functions
+    ######################################################################################
+
+    async def get_room_id(self, room_alias):
+        """
+        Given a matrix room alias, lookup a room id.
+        """
+        room_alias = quote(room_alias)
+        json = await self.api._send("GET", "/directory/room/{}".format(room_alias))
+        if 'room_id' in json:
+            return json['room_id']
+
+    async def matrix_send_message(self, user, room, message):
+        """
+        Send a message to a matrix room as a matrix user.
+
+        Parameters
+        ----------
+
+        user : `appservice_framework.database.User`
+            The user to send the message as.
+
+        room : `appservice_framework.database.Room`
+            The Room to send the message to.
+
+        message : `str`
+            The message to send.
+        """
+        mxid = user.matrixid
+        roomid = await self.get_room_id(room.matrixid)
+        resp = await self.api.send_message(roomid,
+                                           message,
+                                           query_params={'user_id': mxid})
+
+    async def create_matrix_user(self, service_userid, matrix_userid=None, matrix_roomid=None):
+        """
+        Create a matrix user within the appservice namespace for a service user.
+
+        Parameters
+        ----------
+        service_userid : `str`
+            The service id of the user.
+
+        matrix_userid : `str` (optional)
+            The matrix userid of the user. If not specified one will be created
+            following the template ``{prefix}{service_userid}{server_name}``
+            where ``prefix`` is based on the appservice user namespace.
+
+        """
+
+        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one_or_none()
+        if user:
+            return user
+
+        prefix = self.user_namespace.split(".*")[0]
+        if not matrix_userid:
+            matrix_userid = f"{prefix}{service_userid}:{self.server_name}"
+
+        # Localpart is everything before : without #
+        localpart = matrix_userid.split(':')[0][1:]
+
+        user = db.User(matrix_userid, service_userid)
+        self.dbsession.add(user)
+
+
+        self.dbsession.commit()
+
+        data = {
+            'type': "m.login.application_service",
+            'username': quote(localpart)
+        }
+
+        try:
+            resp = await self.api._send(
+                "POST",
+                path="/register",
+                query_params={"access_token": self.api.token},
+                content=data)
+
+        # Catch if this AS user has already been registered
+        except MatrixRequestError as e:
+            content = json.loads(e.content)
+            if content['errcode'] != "M_USER_IN_USE":
+                raise e
+
+
+        return user
+
+
+    async def set_matrix_profile_image(self, user_id, image_url, force=False):
+        """
+        Set the profile image for a matrix user.
+        """
+        if force or not await self.matrix_client.get_avatar_url(user_id) and image_url:
+            # Download profile picture
+            async with self.http_session.request("GET", image_url) as resp:
+                data = await resp.read()
+
+            # Upload to homeserver
+            resp = await self.matrix_client.media_upload(data, resp.content_type,
+                                                         user_id=user_id)
+            json = await resp.json()
+            avatar_url = json['content_uri']
+
+            # Set profile picture
+            resp = await self.matrix_client.set_avatar_url(user_id, avatar_url)
+
+            return resp
+
+    ######################################################################################
     # Public Appservice Methods
     ######################################################################################
 
@@ -360,7 +482,7 @@ class AppService:
         if serviceid:
             filterexp = db.User.serviceid = serviceid
 
-        return self.dbsession.query(db.User).filter(filterexp)
+        return self.dbsession.query(db.User).filter(filterexp).one_or_none()
 
     def get_room(self, matrixid=None, serviceid=None):
         """
@@ -374,66 +496,7 @@ class AppService:
         if serviceid:
             filterexp = db.Room.serviceid = serviceid
 
-        return self.dbsession.query(db.Room).filter(filterexp)
-
-    async def matrix_send_message(self, user, room, message):
-        """
-        Send a message to a matrix room as a matrix user.
-
-        Parameters
-        ----------
-
-        user : `appservice_framework.database.User`
-            The user to send the message as.
-
-        room : `appservice_framework.database.Room`
-            The Room to send the message to.
-
-        message : `str`
-            The message to send.
-        """
-        mxid = user.matrixid
-        roomid = room.matrixid
-
-        resp = await self.api.send_message(roomid,
-                                           message,
-                                           query_params={'user_id': mxid})
-
-    async def create_matrix_user(self, service_userid, matrix_userid=None, matrix_roomid=None):
-        """
-        Create a matrix user within the appservice namespace for a service user.
-
-        Parameters
-        ----------
-        service_userid : `str`
-            The service id of the user.
-
-        matrix_userid : `str` (optional)
-            The matrix userid of the user. If not specified one will be created
-            following the template ``{prefix}{service_userid}{server_name}``
-            where ``prefix`` is based on the appservice user namespace.
-
-        matrix_roomid : `str` (optional)
-            If specified add the user to the matrix room matching this id.
-
-        """
-
-        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one_or_none()
-        if user:
-            return
-
-        prefix = self.room_namespace.split(".*")[0]
-        if not matrix_userid:
-            matrix_userid = f"{prefix}{service_userid}:{self.server_name}"
-        user = db.User(matrix_userid, service_userid)
-        self.dbsession.add(user)
-        if matrix_roomid:
-            room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixid == matrix_roomid).one()
-            room.users.append(user)
-
-        self.dbsession.commit()
-
-        # TODO: Make matrix user
+        return self.dbsession.query(db.Room).filter(filterexp).one_or_none()
 
     async def relay_service_message(self, service_userid, service_roomid, message, receiving_serviceid=None):
         """
@@ -511,17 +574,40 @@ class AppService:
         self.dbsession.commit()
         return user
 
-    def create_linked_room(self, auth_user, matrix_roomid, service_roomid):
+    async def create_linked_room(self, auth_user, matrix_roomid, service_roomid):
         """
         Create a linked room.
 
         This method will create a link between a service room for a single
         authenticated user (which will become the frontier user) and a matrix room.
 
+        This method will invite the auth_user to the matrix room
+
         Will not do anything if room is already linked.
         """
 
-        # TODO: This should check if the matrix room exists etc.
+        try:
+            alias = matrix_roomid.split(':')[0][1:]
+            print(f"Creating room {alias}")
+            await self.api.create_room(alias=alias,
+                                       is_public=True,
+                                       invitees=(),
+                                       query_params={'auth_token': self.api.token})
+
+        except MatrixRequestError as e:
+            content = json.loads(e.content)
+            if content['error'] != "Room alias already taken":
+                raise e
+
+        # TODO: Make this optional somehow?
+        # Invite the user to the room
+        try:
+            await self.api.invite_user(await self.get_room_id(matrix_roomid), auth_user.matrixid)
+        except MatrixRequestError as e:
+            content = json.loads(e.content)
+            if " is already in the room." not in content['error']:
+                raise e
+
         room = db.LinkedRoom(matrix_roomid, service_roomid)
         room.users.append(auth_user)
         room.frontier_user = auth_user
@@ -537,29 +623,31 @@ class AppService:
         Takes *either* a matrix or service room id.
         """
 
-    async def add_auth_user_to_room(self, auth_mxid, matrix_roomid):
+    async def add_user_to_room(self, matrix_userid, matrix_roomid):
         """
-        Add an authenticated user to a room.
+        Add a user to a room.
+
+        If the user is an authenticated user (i.e. a real user) then they are
+        invited to the room, if it is a user managed by the AS then the user is
+        joined to that room.
 
         Will not do anything if user is already in room.
         """
+        print(f"add {matrix_userid} to {matrix_roomid}")
+        user = self.dbsession.query(db.User).filter(db.User.matrixid == matrix_userid).one()
+        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixid == matrix_roomid).one()
 
-    async def set_matrix_profile_image(self, user_id, image_url, force=False):
-        """
-        Set the profile image for a matrix user.
-        """
-        if force or not await self.matrix_client.get_avatar_url(user_id) and image_url:
-            # Download profile picture
-            async with self.http_session.request("GET", image_url) as resp:
-                data = await resp.read()
+        if user in room.users:
+            print("user already in room")
+            return
 
-            # Upload to homeserver
-            resp = await self.matrix_client.media_upload(data, resp.content_type,
-                                                         user_id=user_id)
-            json = await resp.json()
-            avatar_url = json['content_uri']
+        if isinstance(user, db.AuthenticatedUser):
+            print("user is auth, inviting")
+            await self.api.invite_user(room.matrixid, user.matrixid)
+            # TODO: We might need to only add the user to the room after the invite is accepted.
+        else:
+            await self.api.join_room(room.matrixid,
+                                     query_params={'user_id': user.matrixid})
 
-            # Set profile picture
-            resp = await self.matrix_client.set_avatar_url(user_id, avatar_url)
-
-            return resp
+        room.users.append(user)
+        self.dbsession.commit()

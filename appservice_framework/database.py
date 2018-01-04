@@ -27,6 +27,7 @@ class Room(Base):
     }
     matrixid = sa.Column(sa.String)
     active = sa.Column(sa.Boolean)
+    invite_only = sa.Column(sa.Boolean)
 
     users = relationship(
         "User",
@@ -38,9 +39,16 @@ class Room(Base):
         sa.Integer, sa.ForeignKey("auth_user.id"), nullable=True)
     frontier_user = relationship("AuthenticatedUser")
 
-    def __init__(self, matrixid, active=True):
+    def __init__(self, matrixid, active=True, invite_only=False):
         self.matrixid = matrixid
         self.active = active
+        self.invite_only = invite_only
+
+    def __repr__(self):
+        r = super().__repr__()
+        r += '\n'
+        r += "matrixid={}, serviceid={}".format(self.matrixid, self.serviceid)
+        return r
 
     @property
     def auth_users(self):
@@ -60,8 +68,8 @@ class LinkedRoom(Room):
     serviceid = sa.Column(sa.String)
 
 
-    def __init__(self, matrixid, serviceid, active=True):
-        super().__init__(matrixid, active=active)
+    def __init__(self, matrixid, serviceid, active=True, invite_only=False):
+        super().__init__(matrixid, active=active, invite_only=False)
         self.serviceid = serviceid
 
 
@@ -93,6 +101,12 @@ class User(Base):
         self.nick = nick
         self.serviceid = serviceid
         self.matrixid = matrixid
+
+    def __repr__(self):
+        r = super().__repr__()
+        r += '\n'
+        r += "matrixid={}, serviceid={}".format(self.matrixid, self.serviceid)
+        return r
 
 
 class AuthenticatedUser(User):
