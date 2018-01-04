@@ -71,6 +71,12 @@ class AppService:
 
     @property
     def http_session(self):
+        """
+        The HTTP session object.
+
+        .. note::
+            This is only acceible inside the `~appservice_framework.AppService.run` context manager.
+        """
         if self._http_session is None:
             raise AttributeError("the http_session attribute can only be used "
                                  "from within the `AppService.run` context manager")
@@ -79,6 +85,12 @@ class AppService:
 
     @property
     def api(self):
+        """
+        The matrix API object for the appservice.
+
+        .. note::
+            This is only acceible inside the `~appservice_framework.AppService.run` context manager.
+        """
         if self._api is None:
             raise AttributeError("the run attribute can only be used from "
                                  "within the `AppService.run` context manager")
@@ -107,6 +119,14 @@ class AppService:
     def run(self, host="127.0.0.1", port=5000):
         """
         Run the appservice.
+
+        Example
+        -------
+
+        >>> apps = AppService(...)
+        >>> with apps.run() as run_forever:
+        ...     run_forever()
+
         """
         self._http_session = aiohttp.ClientSession(loop=self.loop)
         self._api = MatrixAPI(self.matrix_server, self.http_session, self.access_token)
@@ -385,7 +405,7 @@ class AppService:
         service_userid : `str`
             The service id of the user.
 
-        matrix_userid : `str` (optional)
+        matrix_userid : `str`, optional
             The matrix userid of the user. If not specified one will be created
             following the template ``{prefix}{service_userid}{server_name}``
             where ``prefix`` is based on the appservice user namespace.
@@ -468,7 +488,7 @@ class AppService:
         serviceid : `str`
             The service user id for the connection.
 
-        wait_for_connect : `bool` (optional, default `False`)
+        wait_for_connect : `bool`, optional, default: `False`
             If `True` this function will block until the connection is made, if
             `False` it will return the `asyncio.Task` object for the connection
             attempt.
@@ -476,7 +496,8 @@ class AppService:
         Returns
         -------
         connection : `object` or `asyncio.Task`
-            The connection object as returned by ``@appservice.service_connect.
+            The connection object as returned by ``@appservice.service_connect``.
+
         """
 
         if not serviceid:
@@ -500,10 +521,10 @@ class AppService:
         Parameters
         ----------
 
-        matrixid : `str` (optional)
+        matrixid : `str`, optional
             The matrix id of the user to lookup.
 
-        serviceid : `str` (optional)
+        serviceid : `str`, optional
             Ther service id of the user to lookup.
 
         Returns
@@ -529,10 +550,10 @@ class AppService:
         Parameters
         ----------
 
-        matrixid : `str` (optional)
+        matrixid : `str`, optional
             The matrix id of the room to lookup.
 
-        serviceid : `str` (optional)
+        serviceid : `str`, optional
             Ther service id of the room to lookup.
 
         Returns
@@ -621,7 +642,7 @@ class AppService:
         auth_token : `str`
             The authentication token for this user.
 
-        nick : `str` (optional)
+        nick : `str`, optional
             A nickname for this user.
 
         Returns

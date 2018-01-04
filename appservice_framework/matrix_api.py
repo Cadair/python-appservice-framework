@@ -16,7 +16,11 @@ class AsyncHTTPAPI(MatrixHttpApi):
     """
     Contains all raw matrix HTTP client-server API calls using asyncio and coroutines.
 
-    Usage:
+    Examples
+    --------
+
+    .. code-block: python
+
         async def main():
             async with aiohttp.ClientSession() as session:
                 mapi = AsyncHTTPAPI("http://matrix.org", session)
@@ -26,6 +30,7 @@ class AsyncHTTPAPI(MatrixHttpApi):
 
         loop = asyncio.get_event_loop()
         loop.run_until_complete(main())
+
     """
 
     def __init__(self, base_url, client_session, token=None):
