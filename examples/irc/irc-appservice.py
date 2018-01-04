@@ -1,11 +1,14 @@
-from appservice_framework import AppService
-# from asyncirc import irc
-import bottom
 import asyncio
+
+import bottom
+
+from appservice_framework import AppService
+
 loop = asyncio.get_event_loop()
 loop.set_debug(True)
 
-room = "#test12"
+
+room = "#test01"
 
 apps = AppService("http://localhost:8008",
                   "localhost",
