@@ -15,8 +15,6 @@ from .matrix_api import AsyncHTTPAPI as MatrixAPI
 
 __all__ = ['AppService']
 
-def jsonify(adict):
-    return json.dumps(adict).encode()
 
 class AppService:
     """
@@ -411,7 +409,6 @@ class AppService:
 
         return user
 
-
     async def set_matrix_profile_image(self, user_id, image_url, force=False):
         """
         Set the profile image for a matrix user.
@@ -615,13 +612,6 @@ class AppService:
         self.dbsession.commit()
 
         return room
-
-    async def linked_room_exists(self, matrix_roomid=None, service_roomid=None):
-        """
-        Check to see if a room is already linked.
-
-        Takes *either* a matrix or service room id.
-        """
 
     async def add_user_to_room(self, matrix_userid, matrix_roomid):
         """
