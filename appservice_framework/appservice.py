@@ -423,7 +423,9 @@ class AppService:
 
         prefix = self.user_namespace.split(".*")[0]
         if not matrix_userid:
-            matrix_userid = f"{prefix}{service_userid}:{self.server_name}"
+            matrix_userid = "{prefix}{service_userid}:{server_name}".format(prefix=prefix,
+                                                                            service_userid=service_userid,
+                                                                            server_name=self.server_name)
 
         # Localpart is everything before : without #
         localpart = matrix_userid.split(':')[0][1:]
@@ -692,7 +694,7 @@ class AppService:
 
         try:
             alias = matrix_roomid.split(':')[0][1:]
-            log.debug(f"Creating room {alias}")
+            log.debug("Creating room {}".format(alilas))
             await self.api.create_room(alias=alias,
                                        is_public=self.config.invite_only_rooms,
                                        invitees=(),
@@ -739,7 +741,7 @@ class AppService:
             The room to add the user to.
 
         """
-        log.debug(f"add {matrix_userid} to {matrix_roomid}")
+        log.debug("add {} to {}".format(matrix_userid, matrix_roomid))
         user = self.dbsession.query(db.User).filter(db.User.matrixid == matrix_userid).one()
         room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.matrixid == matrix_roomid).one()
 
