@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import aiohttp
 import aiohttp.web
+import sqlalchemy as sa
 
 from matrix_client.errors import MatrixRequestError
 
@@ -131,16 +132,23 @@ class AppService:
         self._http_session = aiohttp.ClientSession(loop=self.loop)
         self._api = MatrixAPI(self.matrix_server, self.http_session, self.access_token)
 
+        def on_connect(future, *, user):
+            conn, serviceid = future.result()
+            log.debug("Connection successful for %s", serviceid)
+            if serviceid and not user.serviceid:
+                user.serviceid = serviceid
+                self.dbsession.commit()
+
+
         for user in self.dbsession.query(db.AuthenticatedUser):
+            log.debug("connecting user: {}".format(user.matrixid))
             if user not in self.service_connections:
-                connection = asyncio.ensure_future(
+                future = asyncio.ensure_future(
                     self.service_events['connect'](self, user.serviceid, user.auth_token))
-                if connection:
-                    self.service_connections[user] = connection
+                future.add_done_callback(partial(on_connect, user=user))
+                self.service_connections[user] = future
 
         # TODO: This should manually start the webapp.
-        # The object yielded here should have a `run_forever` method that actually blocks.
-        # Rather than making the context manager block.
         yield partial(aiohttp.web.run_app, self.app, host=host, port=port)
 
         for connection in self.service_connections.values():
@@ -168,7 +176,6 @@ class AppService:
         events = json["events"]
         for event in events:
             meth = self._matrix_event_dispatch.get(event['type'], None)
-            log.debug(meth)
             if meth:
                 try:
                     await meth(event)
@@ -332,7 +339,10 @@ class AppService:
 
         | `service` : `object`
         |     An object representing the connection.
-
+        | `service_userid` : `str` or `None`
+        |     The service user id of the connected user
+        | `service_userid` : `str` or `None`
+        |     The service user id of the connected usu
         """
 
         self.service_events['connect'] = self._make_async(coro)
@@ -352,19 +362,26 @@ class AppService:
 
     def service_join_room(self, coro):
         """
-        Decorator for when an authenticated user joins a room.
+        This function is called when an authenticated user joins a new service
+        room, i.e. a room that exists but the service account is not currently
+        a member of.
 
-        ``coro(appservice)``
-
-        Returns:
-            service_userid : `str`
-            servicce_roomid : `str`
+        ``coro(appservice, service_userid, service_roomid)``
         """
 
-        async def join_room(self):
-            userid, roomid = await coro(self)
+        async def join_room(self, service_userid, service_roomid, matrix_roomid=None):
+            # This function is called when a user has joined a room on the
+            # matrix side, so we only need to handle service and database.
 
-            # TODO: Perform matrix side stuff
+            await coro(self, service_userid, service_roomid, matrix_roomid=None)
+
+            room = await create_linked_room(auth_user, service_roomid, matrix_roomid=None)
+            user = self.get_user(serviceid=service_userid)
+
+            room.users.append(user)
+
+            self.dbsession.commit()
+
 
         self.service_events['join_room'] = join_room
 
@@ -372,18 +389,25 @@ class AppService:
 
     def service_part_room(self, coro):
         """
-        Decorator for when an authenticated user leaves a room.
+        This is called when a matrix user leaves a room.
 
-        coro(appservice)
-
-        Returns:
-            matrix_mxid : `str`
-            matrix_room_alias : `str`
+        ``coro(appservice, user, room)``
         """
-        async def part_room(self):
-            mxid, room_alias = await coro(self)
+        async def part_room(self, user, room):
+            await coro(self, user, room)
 
-            # TODO: Perform matrix side stuff
+            # Do database stuff
+            room.users.remove(user)
+
+            if user is room.frontier_user:
+                if room.auth_users:
+                    room.frontier_user = room.auth_users[0]
+                else:
+                    room.active = False
+                    # TODO: If all the auth_users have left the room needs shutting down.
+
+            self.dbsession.commit()
+
 
         self.service_events['part_room'] = part_room
 
@@ -411,6 +435,76 @@ class AppService:
         self.service_events['profile_image'] = profile_image
 
         return profile_image
+
+    ######################################################################################
+    # Service Event Functions
+    ######################################################################################
+    # These are methods the service needs to call when events happen.
+
+    async def relay_service_message(self, service_userid, service_roomid,
+                                    message, receiving_serviceid=None):
+        """
+        Forward a message to matrix.
+
+        Parameters
+        ----------
+        service_userid : `str`
+            Service User ID
+
+        service_roomid : `str`
+            Service Room ID
+
+        message : `str`
+            Message to relay.
+
+        receiving_serviceid : `str`
+            The service user id of the receiving account. Can be `None`
+            if there is only one authenticated user in the room.a
+
+        Returns
+        -------
+
+        response `None` or Response
+            Returns None if the receiving user is not the frontier user,
+            otherwise returns the response from the matrix send message call.
+
+        """
+        # TODO: Handle plain/HTML/markdown
+
+        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid).one_or_none()
+        if not room:
+            raise ValueError("No linked room exists for the service room {}.".format(service_roomid))
+
+        # receiving_serviceid is needed if there is more than one auth user in a room.
+        if not receiving_serviceid and len(room.auth_users) > 1:
+            raise ValueError("If there is more than one "
+                             "AuthenticatedUser in the room, then receiving_serviceid "
+                             "must be specified.")
+        elif receiving_serviceid:
+            # If the receiving user is not the frontier user, do nothing
+            if room.frontier_user.serviceid != receiving_serviceid:
+                return
+
+        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+
+        if not user in room.users:
+            raise ValueError("The user '{}' has not been added to this room.".format(service_userid))
+
+        return await self.matrix_send_message(user, room, message)
+
+    async def service_user_join(self, service_userid, service_roomid):
+        """
+        Called when a service user joins a room.
+
+        The service user is added to the room (and created it needed),
+        """
+
+    async def service_user_part(self, service_userid, service_roomid):
+        """
+        Called when a service user leaves room.
+
+        The corresponding matrix user will part the room if managed by the AS.
+        """
 
     ######################################################################################
     # Matrix Helper Functions
@@ -535,7 +629,7 @@ class AppService:
             return resp
 
     ######################################################################################
-    # Public Appservice Methods
+    # Appservice Helper Methods
     ######################################################################################
 
     def get_connection(self, serviceid=None, wait_for_connect=False):
@@ -584,7 +678,7 @@ class AppService:
             The matrix id of the user to lookup.
 
         serviceid : `str`, optional
-            Ther service id of the user to lookup.
+            The service id of the user to lookup.
 
         Returns
         -------
@@ -598,7 +692,7 @@ class AppService:
         if matrixid:
             filterexp = db.User.matrixid == matrixid
         if serviceid:
-            filterexp = db.User.serviceid = serviceid
+            filterexp = db.User.serviceid == serviceid
 
         return self.dbsession.query(db.User).filter(filterexp).one_or_none()
 
@@ -625,69 +719,18 @@ class AppService:
             raise ValueError("Either matrixid or serviceid must be specified.")
 
         if matrixid:
-            filterexp = db.Room.matrixalias == matrixid
+            filterexp = db.Room.matrixalias == sa.text(matrixid)
+            return self.dbsession.query(db.Room).filter(filterexp).one_or_none()
         if serviceid:
-            filterexp = db.Room.serviceid = serviceid
+            return self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == serviceid).one_or_none()
 
-        return self.dbsession.query(db.Room).filter(filterexp).one_or_none()
 
-    async def relay_service_message(self, service_userid, service_roomid, message, receiving_serviceid=None):
-        """
-        Forward a message to matrix.
-
-        Parameters
-        ----------
-        service_userid : `str`
-            Service User ID
-
-        service_roomid : `str`
-            Service Room ID
-
-        message : `str`
-            Message to relay.
-
-        receiving_serviceid : `str`
-            The service user id of the receiving account. Can be `None`
-            if there is only one authenticated user in the room.a
-
-        Returns
-        -------
-
-        response `None` or Response
-            Returns None if the receiving user is not the frontier user,
-            otherwise returns the response from the matrix send message call.
-
-        """
-        # TODO: Handle plain/HTML/markdown
-
-        room = self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == service_roomid).one_or_none()
-        if not room:
-            raise ValueError("No linked room exists for the service room {}.".format(service_roomid))
-
-        # receiving_serviceid is needed if there is more than one auth user in a room.
-        if not receiving_serviceid and len(room.auth_users) > 1:
-            raise ValueError("If there is more than one "
-                             "AuthenticatedUser in the room, then receiving_serviceid "
-                             "must be specified.")
-        elif receiving_serviceid:
-            receiving_user = (self.dbsession.query(db.AuthenticatedUser)
-                              .filter(AuthenticatedUser.serviceid == receiving_serviceid))
-            # If the receiving user is not the frontier user, do nothing
-            if room.frontier_user != receving_user:
-                return
-
-        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
-
-        if not user in room.users:
-            raise ValueError("The user '{}' has not been added to this room.".format(service_userid))
-
-        return await self.matrix_send_message(user, room, message)
-
-    def add_authenticated_user(self, matrixid, serviceid, auth_token, nick=None):
+    def add_authenticated_user(self, matrixid, auth_token, serviceid=None, nick=None):
         """
         Add an authenticated user to the appservice.
 
-        This user will connect when the appservice is run.
+        This user will connect when the appservice is run, if serviceid was not
+        specified it must be returned by the connect decorator.
 
         Parameters
         ----------
@@ -695,11 +738,11 @@ class AppService:
         matrixid : `str`
             The matrix id of the user to add.
 
-        serviceid : `str`
-            The username/id for the service user.
-
         auth_token : `str`
             The authentication token for this user.
+
+        serviceid : `str`, optional
+            The username/id for the service user.
 
         nick : `str`, optional
             A nickname for this user.
@@ -712,12 +755,12 @@ class AppService:
             ``@appservice.service_connect`` decorator.
 
         """
-        user = db.AuthenticatedUser(matrixid, serviceid, auth_token, nick=nick)
+        user = db.AuthenticatedUser(matrixid, auth_token, serviceid=None, nick=nick)
         self.dbsession.add(user)
         self.dbsession.commit()
         return user
 
-    async def create_linked_room(self, auth_user, matrix_roomid, service_roomid):
+    async def create_linked_room(self, auth_user, service_roomid, matrix_roomid=None):
         """
         Create a linked room.
 
@@ -736,19 +779,25 @@ class AppService:
             room, and will be invited to this room and added to the room in the
             database.
 
-        matrix_roomid : `str`
-            The matrix room alias of the room to create.
-
         service_roomid : `str`
             The service room id this room will be linked to.
+
+        matrix_roomid : `str`, optional
+            The matrix room alias of the room to create.
 
         Returns
         -------
 
-        room : `appservice_framework.database.LinkedRoom`
+        room : `~appservice_framework.database.LinkedRoom`
             The room object that has been added to the database.
+
         """
 
+        prefix = self.room_namespace.split(".*")[0]
+        if not matrix_roomid:
+            matrix_roomid = "{prefix}{service_roomid}:{server_name}".format(prefix=prefix,
+                                                                            service_roomid=service_roomid,
+                                                                            server_name=self.server_name)
         try:
             alias = matrix_roomid.split(':')[0][1:]
             log.debug("Creating room {}".format(alias))

@@ -37,11 +37,8 @@ async def connect_irc(apps, serviceid, auth_token):
 
 
 @apps.matrix_recieve_message
-async def recieve_message(apps, auth_user, room, content):
-    """
-    """
-    print("##", auth_user, room, content)
-    conn = await apps.get_connection(wait_for_connect=False)
+async def send_message(apps, auth_user, room, content):
+    conn = await apps.service_connections[auth_user]
     conn.send('PRIVMSG', target=room.serviceid, message=content['body'])
 
 

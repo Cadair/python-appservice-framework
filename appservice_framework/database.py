@@ -92,7 +92,7 @@ class User(Base):
     }
 
     nick = sa.Column(sa.String, nullable=True)
-    serviceid = sa.Column(sa.String)
+    serviceid = sa.Column(sa.String, nullable=True)
     matrixid = sa.Column(sa.String)
 
     rooms = relationship(
@@ -127,7 +127,7 @@ class AuthenticatedUser(User):
     auth_token = sa.Column(sa.String, nullable=True)
 
 
-    def __init__(self, matrixid, serviceid, auth_token, nick=None):
+    def __init__(self, matrixid, auth_token, serviceid=None, nick=None):
         super().__init__(matrixid, serviceid, nick)
         self.auth_token = auth_token
 
