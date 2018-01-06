@@ -1,10 +1,11 @@
+import os
 import json
 import asyncio
 import logging
 from collections import namedtuple
 from contextlib import contextmanager
 from functools import wraps, partial
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import aiohttp.web
@@ -134,7 +135,7 @@ class AppService:
 
         def on_connect(future, *, user):
             conn, serviceid = future.result()
-            log.debug("Connection successful for %s", serviceid)
+            log.info("Connection successful for %s", serviceid)
             if serviceid and not user.serviceid:
                 user.serviceid = serviceid
                 self.dbsession.commit()
@@ -454,7 +455,7 @@ class AppService:
         service_roomid : `str`
             Service Room ID
 
-        message : `str`
+        message : `str` or `dict`
             Message to relay.
 
         receiving_serviceid : `str`
@@ -492,6 +493,26 @@ class AppService:
 
         return await self.matrix_send_message(user, room, message)
 
+    async def relay_service_image(self, service_userid, service_roomid,
+                                  image_url, receiving_serviceid=None):
+        p = urlparse(image_url)
+        if p.scheme != "mxc":
+            user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+            image_url = await self.upload_image_to_matrix(user.matrixid, image_url)
+
+        # Take the last section of the path to be the name
+        item_name = os.path.split(p.path)[1]
+
+        content_pack = {
+            "url": image_url,
+            "msgtype": "m.image",
+            "body": item_name,
+            "info": {}
+        }
+
+        return await self.relay_service_message(service_userid, service_roomid,
+                                                content_pack, receiving_serviceid)
+
     async def service_user_join(self, service_userid, service_roomid):
         """
         Called when a service user joins a room.
@@ -525,7 +546,7 @@ class AppService:
         if 'room_id' in json:
             return json['room_id']
 
-    async def matrix_send_message(self, user, room, message):
+    async def matrix_send_message(self, user, room, content):
         """
         Send a message to a matrix room as a matrix user.
 
@@ -537,17 +558,21 @@ class AppService:
 
         room : `appservice_framework.database.Room`
             The Room to send the message to.
-
-        message : `str`
-            The message to send.
+        content : `dict` or `str`
+            The content or text to send
         """
-        mxid = user.matrixid
-        roomid = await self.get_room_id(room.matrixalias)
-        return await self.api.send_message(roomid,
-                                           message,
-                                           query_params={'user_id': mxid})
 
-    async def create_matrix_user(self, service_userid, matrix_userid=None, matrix_roomid=None):
+        if isinstance(content, str):
+            content = self.api.get_text_body(content, "m.text")
+
+        mxid = user.matrixid
+
+        return await self.api.send_message_event(room.matrixid, "m.room.message",
+                                                 content,
+                                                 query_params={'user_id': mxid})
+
+    async def create_matrix_user(self, service_userid, matrix_userid=None,
+                                 nick=None, matrix_roomid=None):
         """
         Create a matrix user within the appservice namespace for a service user.
 
@@ -581,10 +606,8 @@ class AppService:
         # Localpart is everything before : without #
         localpart = matrix_userid.split(':')[0][1:]
 
-        user = db.User(matrix_userid, service_userid)
+        user = db.User(matrix_userid, service_userid, nick=nick)
         self.dbsession.add(user)
-
-
         self.dbsession.commit()
 
         data = {
@@ -605,26 +628,39 @@ class AppService:
             if content['errcode'] != "M_USER_IN_USE":
                 raise e
 
+        if nick:
+            await self.api.set_display_name(matrix_userid, nick,
+                                            query_params={'user_id': matrix_userid,
+                                                          'auth_token': self.api.token})
 
         return user
+
+    async def upload_image_to_matrix(self, matrix_userid, image_url):
+        """
+        Given a URL upload the image to the homeserver for the given user.
+        """
+        async with self.http_session.request("GET", image_url) as resp:
+            data = await resp.read()
+
+        json = await self.api.media_upload(data, resp.content_type,
+                                           query_params={'user_id': matrix_userid,
+                                                         'auth_token': self.api.token})
+        return json['content_uri']
 
     async def set_matrix_profile_image(self, user_id, image_url, force=False):
         """
         Set the profile image for a matrix user.
         """
-        if force or not await self.matrix_client.get_avatar_url(user_id) and image_url:
-            # Download profile picture
-            async with self.http_session.request("GET", image_url) as resp:
-                data = await resp.read()
+        if force or not (await self.api.get_avatar_url(user_id) and image_url):
+            log.debug("Setting profile picture for %s, %s", user_id, image_url)
 
             # Upload to homeserver
-            resp = await self.matrix_client.media_upload(data, resp.content_type,
-                                                         user_id=user_id)
-            json = await resp.json()
-            avatar_url = json['content_uri']
+            avatar_url = await self.upload_image_to_matirx(user_id, image_url)
 
             # Set profile picture
-            resp = await self.matrix_client.set_avatar_url(user_id, avatar_url)
+            resp = await self.api.set_avatar_url(user_id, avatar_url,
+                                                 query_params={'auth_token': self.api.token,
+                                                               'user_id': user_id})
 
             return resp
 
@@ -760,7 +796,7 @@ class AppService:
         self.dbsession.commit()
         return user
 
-    async def create_linked_room(self, auth_user, service_roomid, matrix_roomid=None):
+    async def create_linked_room(self, auth_user, service_roomid, matrix_roomid=None, matrix_roomname=None):
         """
         Create a linked room.
 
@@ -812,6 +848,12 @@ class AppService:
                 raise e
 
         roomid = await self.get_room_id(matrix_roomid)
+
+        if matrix_roomname:
+            resp = await self.api.set_room_name(roomid,
+                                                matrix_roomname,
+                                                query_params={'auth_token': self.api.token})
+
         # Invite the user to the room, but not if they are already in the room.
         await self._invite_user(roomid, auth_user.matrixid)
 
