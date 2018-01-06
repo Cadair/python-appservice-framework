@@ -66,6 +66,7 @@ class AppService:
         # Setup internal matrix event dispatch
         self._matrix_event_mapping()
         self.matrix_events = {}
+        self.matrix_events['receive_message'] = {}
         self.service_events = {}
 
         # Keep a mapping of service connections
@@ -256,7 +257,8 @@ class AppService:
             return
             # auth_user = room.frontier_user
 
-        await self.matrix_events['recieve_message'](self, auth_user, room, event['content'])
+        content_type = event['content']['msgtype']
+        await self.matrix_events['receive_message'][content_type](self, auth_user, room, event['content'])
 
 
     async def _invite_user(self, roomid, matrixid):
@@ -282,11 +284,21 @@ class AppService:
 
     def matrix_recieve_message(self, coro):
         """
-        A matrix 'm.room.message' event in a bridged room.
+        A matrix 'm.room.message' event with 'm.text' type.
 
         coro(appservice, auth_user, room, content)
         """
-        self.matrix_events['recieve_message'] = coro
+        self.matrix_events['receive_message']['m.text'] = coro
+
+        return coro
+
+    def matrix_recieve_image(self, coro):
+        """
+        A matrix 'm.room.message' event with 'm.image' type.
+
+        coro(appservice, auth_user, room, content)
+        """
+        self.matrix_events['recieve_message']['m.image'] = coro
 
         return coro
 
