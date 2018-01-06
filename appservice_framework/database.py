@@ -22,7 +22,7 @@ class Room(Base):
     id = sa.Column(sa.Integer, primary_key=True)
     type = sa.Column(sa.String)
     __mapper_args__ = {
-        'polymorphic_identity': 'admin',
+        'polymorphic_identity': 'room',
         'polymorphic_on': type
     }
 
@@ -36,11 +36,6 @@ class Room(Base):
         "User",
         secondary=room_user_table,
         back_populates="rooms")
-
-    # Know which user to listen to events from
-    frontier_userid = sa.Column(
-        sa.Integer, sa.ForeignKey("auth_user.id"), nullable=True)
-    frontier_user = relationship("AuthenticatedUser")
 
     def __init__(self, matrixalias, matrixid, active=True, invite_only=False):
         self.matrixalias = matrixalias
@@ -58,6 +53,19 @@ class Room(Base):
     def auth_users(self):
         return list(filter(lambda x: isinstance(x, AuthenticatedUser), self.users))
 
+class AdminRoom(Room):
+    """
+    A matrix room for 1:1 chats.
+    """
+    __tablename__ = "admin_room"
+    __mapper_args__ = {
+        'polymorphic_identity': 'admin',
+    }
+
+    id = sa.Column(sa.Integer, sa.ForeignKey('room.id'), primary_key=True)
+
+    def __init__(self, matrixalias, matrixid, active=True, invite_only=True):
+        super().__init__(matrixalias, matrixid, active=active, invite_only=invite_only)
 
 class LinkedRoom(Room):
     """
@@ -70,6 +78,11 @@ class LinkedRoom(Room):
 
     id = sa.Column(sa.Integer, sa.ForeignKey('room.id'), primary_key=True)
     serviceid = sa.Column(sa.String)
+
+    # Know which user to listen to events from
+    frontier_userid = sa.Column(
+        sa.Integer, sa.ForeignKey("auth_user.id"), nullable=True)
+    frontier_user = relationship("AuthenticatedUser")
 
 
     def __init__(self, matrixalias, matrixid, serviceid, active=True, invite_only=False):
