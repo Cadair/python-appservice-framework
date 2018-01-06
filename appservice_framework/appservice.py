@@ -298,7 +298,7 @@ class AppService:
 
         coro(appservice, auth_user, room, content)
         """
-        self.matrix_events['recieve_message']['m.image'] = coro
+        self.matrix_events['receive_message']['m.image'] = coro
 
         return coro
 
@@ -506,19 +506,21 @@ class AppService:
         return await self.matrix_send_message(user, room, message)
 
     async def relay_service_image(self, service_userid, service_roomid,
-                                  image_url, receiving_serviceid=None):
+                                  image_url, receiving_serviceid=None,
+                                  filename=None):
         p = urlparse(image_url)
         if p.scheme != "mxc":
             user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
             image_url = await self.upload_image_to_matrix(user.matrixid, image_url)
 
         # Take the last section of the path to be the name
-        item_name = os.path.split(p.path)[1]
+        if not filename:
+            filename = os.path.split(p.path)[1]
 
         content_pack = {
             "url": image_url,
             "msgtype": "m.image",
-            "body": item_name,
+            "body": filename,
             "info": {}
         }
 
