@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import logging
 from collections import namedtuple
@@ -143,14 +144,15 @@ class AppService:
 
 
         for user in self.dbsession.query(db.AuthenticatedUser):
-            log.debug("connecting user: {}".format(user.matrixid))
-            if user not in self.service_connections:
+            if user not in self.service_connections.keys():
+                log.debug("connecting user: {}".format(user.matrixid))
                 future = asyncio.ensure_future(
                     self.service_events['connect'](self, user.serviceid, user.auth_token))
                 future.add_done_callback(partial(on_connect, user=user))
                 self.service_connections[user] = future
 
         # TODO: This should manually start the webapp.
+        # We also need to make sure the things exit properly
         yield partial(aiohttp.web.run_app, self.app, host=host, port=port)
 
         for connection in self.service_connections.values():
@@ -224,7 +226,10 @@ class AppService:
         # TODO: If a direct chat invite (for admin room).
         # TODO: If a leave event in a bridged room.
         # TODO: If a join event in a bridged room.
-        pass
+
+        # TODO: Filter events triggered by the AS
+        log.debug("Membership Event: %s", event)
+        log.error("Membership event received, handling is not yet implemented.")
 
     async def _matrix_message(self, event):
         user_id = event['user_id']
@@ -329,7 +334,6 @@ class AppService:
     # TODO: Add matrix state (online/offline)
     # TODO: Add matrix user read
     # TODO: Add matrix m.emote
-    # TODO: Add matrix m.image
     # TODO: Add a hook for plain text or html messages?
 
     ######################################################################################
@@ -496,9 +500,14 @@ class AppService:
         elif receiving_serviceid:
             # If the receiving user is not the frontier user, do nothing
             if room.frontier_user.serviceid != receiving_serviceid:
+                log.debug("%s is not the frontier user", receiving_serviceid)
                 return
 
         user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+
+        # If the user is an auth user we can't send messages for them
+        if isinstance(user, db.AuthenticatedUser):
+            return
 
         if not user in room.users:
             raise ValueError("The user '{}' has not been added to this room.".format(service_userid))
@@ -583,7 +592,8 @@ class AppService:
 
         return await self.api.send_message_event(room.matrixid, "m.room.message",
                                                  content,
-                                                 query_params={'user_id': mxid})
+                                                 query_params={'user_id': mxid,
+                                                               'auth_token': self.api.token})
 
     async def create_matrix_user(self, service_userid, matrix_userid=None,
                                  nick=None, matrix_roomid=None):
@@ -669,7 +679,7 @@ class AppService:
             log.debug("Setting profile picture for %s, %s", user_id, image_url)
 
             # Upload to homeserver
-            avatar_url = await self.upload_image_to_matirx(user_id, image_url)
+            avatar_url = await self.upload_image_to_matrix(user_id, image_url)
 
             # Set profile picture
             resp = await self.api.set_avatar_url(user_id, avatar_url,
