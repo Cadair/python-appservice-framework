@@ -10,12 +10,14 @@ loop.set_debug(True)
 
 room = "#test01"
 
-apps = AppService("http://localhost:8008",
-                  "localhost",
-                  "wfghWEGh3wgWHEf3478sHFWE",
-                  "@irc_.*",
-                  "#irc_.*",
-                  "sqlite:///:memory:", loop=loop)
+apps = AppService(matrix_server="http://localhost:8008",
+                  server_domain="localhost",
+                  access_token="wfghWEGh3wgWHEf3478sHFWE",
+                  user_namespace="@irc_.*",
+                  sender_localpart="irc",
+                  room_namespace="#irc_.*",
+                  database_url="sqlite:///:memory:",
+                  loop=loop)
 
 @apps.service_connect
 async def connect_irc(apps, serviceid, auth_token):
@@ -33,7 +35,7 @@ async def connect_irc(apps, serviceid, auth_token):
     # Tempt send for testing
     conn.send('PRIVMSG', target=room, message="Hello")
 
-    return conn
+    return conn, serviceid
 
 
 @apps.matrix_recieve_message
@@ -42,12 +44,12 @@ async def send_message(apps, auth_user, room, content):
     conn.send('PRIVMSG', target=room.serviceid, message=content['body'])
 
 
-user1 = apps.add_authenticated_user("@admin:localhost", "matrix", "")
+user1 = apps.add_authenticated_user("@admin:localhost", "", serviceid="matrix")
 
 # Use a context manager to ensure clean shutdown.
 with apps.run() as run_forever:
-    room = loop.run_until_complete(apps.create_linked_room(user1, f"#irc_{room}:localhost", room))
-    conn = apps.get_connection(wait_for_connect=True)
+    room = loop.run_until_complete(apps.create_linked_room(user1, room))
+    conn, serviceid = apps.get_connection(wait_for_connect=True)
 
     @conn.on("PRIVMSG")
     async def recieve_message(**kwargs):

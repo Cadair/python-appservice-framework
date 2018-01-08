@@ -39,8 +39,8 @@ class AppService:
     """
 
     def __init__(self, matrix_server, server_domain, access_token,
-                 user_namespace, room_namespace, database_url,
-                 loop=None, invite_only_rooms=False):
+                 user_namespace, room_namespace, sender_localpart,
+                 database_url, loop=None, invite_only_rooms=False):
 
         if loop:
             self.loop = loop
@@ -54,6 +54,8 @@ class AppService:
         self.access_token = access_token
         self.server_name = server_domain
         self.user_namespace = user_namespace
+        self.appservice_userid = "@{}:{}".format(sender_localpart,
+                                                 server_domain)
         self.room_namespace = room_namespace
 
         self.config = config(invite_only_rooms=invite_only_rooms)
@@ -227,7 +229,9 @@ class AppService:
         # TODO: If a leave event in a bridged room.
         # TODO: If a join event in a bridged room.
 
-        # TODO: Filter events triggered by the AS
+        if event['sender'] == self.appservice_userid:
+            return
+
         log.debug("Membership Event: %s", event)
         log.error("Membership event received, handling is not yet implemented.")
 
@@ -815,7 +819,7 @@ class AppService:
             ``@appservice.service_connect`` decorator.
 
         """
-        user = db.AuthenticatedUser(matrixid, auth_token, serviceid=None, nick=nick)
+        user = db.AuthenticatedUser(matrixid, auth_token, serviceid=serviceid, nick=nick)
         self.dbsession.add(user)
         self.dbsession.commit()
         return user
