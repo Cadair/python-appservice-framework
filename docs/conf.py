@@ -36,7 +36,8 @@ extensions = ['sphinx.ext.autodoc',
               'sphinx.ext.mathjax',
               'sphinx.ext.viewcode',
               'sphinx.ext.napoleon',
-              'sphinx_automodapi.automodapi']
+              'sphinx_automodapi.automodapi',
+              'sphinxcontrib.asyncio']
 
 intersphinx_mapping = {'python': ('https://docs.python.org/3.6', None),
                        'aiohttp': ('http://aiohttp.readthedocs.io/en/stable/', None)}

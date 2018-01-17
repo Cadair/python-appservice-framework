@@ -1,5 +1,6 @@
 aiohttp
 sqlalchemy
+sphinxcontrib-asyncio
 sphinx-automodapi
 sphinx
 git+https://github.com/Cadair/matrix-python-sdk
