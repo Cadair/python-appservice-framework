@@ -121,6 +121,13 @@ class AppService:
     # Appservice Web Server Handles
     ######################################################################################
 
+    def _connection_successful(self, future, *, user):
+        conn, serviceid = future.result()
+        log.info("Connection successful for %s", serviceid)
+        if serviceid and not user.serviceid:
+            user.serviceid = serviceid
+            self.dbsession.commit()
+
     @contextmanager
     def run(self, host="127.0.0.1", port=5000):
         """
@@ -137,20 +144,12 @@ class AppService:
         self._http_session = aiohttp.ClientSession(loop=self.loop)
         self._api = MatrixAPI(self.matrix_server, self.http_session, self.access_token)
 
-        def on_connect(future, *, user):
-            conn, serviceid = future.result()
-            log.info("Connection successful for %s", serviceid)
-            if serviceid and not user.serviceid:
-                user.serviceid = serviceid
-                self.dbsession.commit()
-
-
         for user in self.dbsession.query(db.AuthenticatedUser):
             if user not in self.service_connections.keys():
                 log.debug("connecting user: {}".format(user.matrixid))
                 future = asyncio.ensure_future(
                     self.service_events['connect'](self, user.serviceid, user.auth_token))
-                future.add_done_callback(partial(on_connect, user=user))
+                future.add_done_callback(partial(self._connection_successful, user=user))
                 self.service_connections[user] = future
 
         # TODO: This should manually start the webapp.
@@ -186,7 +185,7 @@ class AppService:
                 try:
                     await meth(event)
                 except Exception as e:
-                    log.exception("bad things happened")
+                    log.exception("Handling matrix {} event failed.".format(event['type']))
                     # return aiohttp.web.Response(status=500)
 
         return aiohttp.web.Response(body=b"{}")
