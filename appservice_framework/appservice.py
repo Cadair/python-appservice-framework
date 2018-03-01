@@ -395,13 +395,12 @@ class AppService:
 
             await coro(self, service_userid, service_roomid, matrix_roomid=None)
 
-            room = await create_linked_room(auth_user, service_roomid, matrix_roomid=None)
+            room = await self.create_linked_room(auth_user, service_roomid, matrix_roomid=None)
             user = self.get_user(serviceid=service_userid)
 
             room.users.append(user)
 
             self.dbsession.commit()
-
 
         self.service_events['join_room'] = join_room
 
@@ -427,7 +426,6 @@ class AppService:
                     # TODO: If all the auth_users have left the room needs shutting down.
 
             self.dbsession.commit()
-
 
         self.service_events['part_room'] = part_room
 
@@ -722,7 +720,7 @@ class AppService:
             else:
                 connection = list(self.service_connections.values())[0]
         else:
-            authuser = self.dbsession.query(db.User).filter(User.serviceid == serviceid)
+            authuser = self.dbsession.query(db.User).filter(db.User.serviceid == serviceid)
             connection = self.service_connections[authuser]
 
         if wait_for_connect:
@@ -730,7 +728,7 @@ class AppService:
         else:
             return connection
 
-    def get_user(self, matrixid=None, serviceid=None):
+    def get_user(self, matrixid=None, serviceid=None, user_type='service'):
         """
         Get a `appservice_framework.database.User` object based on IDs.
 
@@ -757,7 +755,7 @@ class AppService:
         if serviceid:
             filterexp = db.User.serviceid == serviceid
 
-        return self.dbsession.query(db.User).filter(filterexp).one_or_none()
+        return self.dbsession.query(db.User).filter(filterexp).filter(db.User.type == user_type).one_or_none()
 
     def get_room(self, matrixid=None, serviceid=None):
         """
