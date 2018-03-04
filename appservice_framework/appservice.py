@@ -504,13 +504,24 @@ class AppService:
                 log.debug("%s is not the frontier user", receiving_serviceid)
                 return
 
-        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+        # Get all the users in the db for this service id
+        user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).all()
 
-        # If the user is an auth user we can't send messages for them
-        if isinstance(user, db.AuthenticatedUser):
-            return
+        if len(user) > 1:
+            # If there is more than one user in the DB, get all the non-auth
+            # users (ones we can send messages as)
+            user = list(filter(lambda x: not isinstance(x, db.AuthenticatedUser), user))
+            # If the user is an auth user we can't send messages for them
+            if not user:
+                return
 
-        if not user in room.users:
+        if len(user) > 1:
+            log.debug("Multiple non-auth users matched for {}".format(service_userid))
+
+        # Otherwise take the first user that matches and hope it's the right one
+        user = user[0]
+
+        if user not in room.users:
             raise ValueError("The user '{}' has not been added to this room.".format(service_userid))
 
         return await self.matrix_send_message(user, room, message)
