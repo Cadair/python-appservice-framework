@@ -63,7 +63,7 @@ class AppService:
         self.dbsession = db.initialize(database_url)
 
         # Setup web server to listen for appservice calls
-        self.app = aiohttp.web.Application(loop=self.loop)
+        self.app = aiohttp.web.Application(loop=self.loop, client_max_size=None)
         self._routes()
 
         # Setup internal matrix event dispatch
