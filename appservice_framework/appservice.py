@@ -28,8 +28,8 @@ log.setLevel(logging.DEBUG)
 
 __all__ = ['AppService']
 
-
 config = namedtuple("config", "invite_only_rooms")
+
 
 class AppService:
     """
@@ -268,7 +268,6 @@ class AppService:
         content_type = event['content']['msgtype']
         await self.matrix_events['receive_message'][content_type](self, auth_user, room, event['content'])
 
-
     async def _invite_user(self, roomid, matrixid):
         """
         Invite to a room, but ignore errors if user is already in room.
@@ -412,6 +411,7 @@ class AppService:
 
         ``coro(appservice, user, room)``
         """
+
         async def part_room(self, user, room):
             await coro(self, user, room)
 
@@ -704,17 +704,26 @@ class AppService:
         """
         Set the avatar image for a matrix room.
         """
-        if force or not (await self.api.get_room_avatar(room_id) and image_url):
-            log.debug("Setting room avatar picture for %s, %s", room_id, image_url)
+        # For currently unknown reason,
+        # api.get_room_avatar sometimes raises 404: {"errcode":"M_NOT_FOUND","error":"Event not found."}
+        # Catching that specific error should still allow for trying to set the avatar however.
+        existing_avatar_url = ''
+        try:
+            existing_avatar_url = await self.api.get_room_avatar(room_id)
+        except MatrixRequestError as e:
+            if e.code == 404:
+                log.debug("room %s reported that event m.room.avatar is unknown", room_id)
+            else:
+                raise e
+
+        if force or not (existing_avatar_url and image_url):
+            log.debug("Setting room avatar picture for %s, %s; replacing %s", room_id, image_url, existing_avatar_url)
 
             # Upload to homeserver
             avatar_url = await self.upload_image_to_matrix(self.appservice_userid, image_url)
 
             # Set profile picture
-            resp = await self.api.set_room_avatar(room_id, avatar_url,
-                                                      query_params={'auth_token': self.api.token,
-                                                                    'user_id': self.appservice_userid}
-                                                      )
+            resp = await self.api.set_room_avatar(room_id, avatar_url, query_params={'user_id': self.appservice_userid})
 
             return resp
 
@@ -813,7 +822,6 @@ class AppService:
             return self.dbsession.query(db.Room).filter(filterexp).one_or_none()
         if serviceid:
             return self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == serviceid).one_or_none()
-
 
     def add_authenticated_user(self, matrixid, auth_token, serviceid=None, nick=None):
         """
