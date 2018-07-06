@@ -89,6 +89,10 @@ class AsyncHTTPAPI(MatrixHttpApi):
         content = await self._send("GET", "/profile/%s/avatar_url" % user_id)
         return content.get('avatar_url', None)
 
+    async def get_room_avatar_url(self, room_id):
+        content = await self._send("GET", "/rooms/%s/state/m.room.avatar" % room_id)
+        return content.get('url', None)
+
     async def get_room_id(self, room_alias):
         """Get room id from its alias
 

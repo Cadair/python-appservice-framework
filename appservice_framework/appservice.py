@@ -700,6 +700,24 @@ class AppService:
 
             return resp
 
+    async def set_matrix_room_image(self, room_id, image_url, force=False):
+        """
+        Set the avatar image for a matrix room.
+        """
+        if force or not (await self.api.get_room_avatar(room_id) and image_url):
+            log.debug("Setting room avatar picture for %s, %s", room_id, image_url)
+
+            # Upload to homeserver
+            avatar_url = await self.upload_image_to_matrix(self.appservice_userid, image_url)
+
+            # Set profile picture
+            resp = await self.api.set_room_avatar(room_id, avatar_url,
+                                                      query_params={'auth_token': self.api.token,
+                                                                    'user_id': self.appservice_userid}
+                                                      )
+
+            return resp
+
     ######################################################################################
     # Appservice Helper Methods
     ######################################################################################
