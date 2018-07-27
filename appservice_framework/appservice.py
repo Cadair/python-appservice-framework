@@ -548,6 +548,36 @@ class AppService:
         return await self.relay_service_message(service_userid, service_roomid,
                                                 content_pack, receiving_serviceid)
 
+    async def relay_service_file(self, service_userid, service_roomid,
+                                  file_url, receiving_serviceid=None,
+                                  filename=None, body=None, size=None):
+        p = urlparse(file_url)
+        if p.scheme != "mxc":
+            user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+            file_url = await self.upload_image_to_matrix(user.matrixid, file_url)
+
+        # Take the last section of the path to be the name
+        if not filename:
+            filename = os.path.split(p.path)[1]
+
+        # Offer to set body seperate, e.g. to be able to add a tag for bridge message deduplication.
+        if not body:
+            body = filename
+
+        content_pack = {
+            "url": file_url,
+            "msgtype": "m.file",
+            "filename": filename,
+            "body": body,
+            "info": {}
+        }
+
+        if size:
+            content_pack['info']['size'] = size
+
+        return await self.relay_service_message(service_userid, service_roomid,
+                                                content_pack, receiving_serviceid)
+
     async def service_user_join(self, service_userid, service_roomid):
         """
         Called when a service user joins a room.
