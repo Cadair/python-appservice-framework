@@ -577,36 +577,6 @@ class AppService:
         return await self.relay_service_message(service_userid, service_roomid,
                                                 content_pack, receiving_serviceid)
 
-    async def relay_service_file(self, service_userid, service_roomid,
-                                 file_url, receiving_serviceid=None,
-                                 filename=None, body=None, size=None):
-        p = urlparse(file_url)
-        if p.scheme != "mxc":
-            user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
-            file_url = await self.upload_image_to_matrix(user.matrixid, file_url)
-
-        # Take the last section of the path to be the name
-        if not filename:
-            filename = os.path.split(p.path)[1]
-
-        # Offer to set body seperate, e.g. to be able to add a tag for bridge message deduplication.
-        if not body:
-            body = filename
-
-        content_pack = {
-            "url": file_url,
-            "msgtype": "m.file",
-            "filename": filename,
-            "body": body,
-            "info": {}
-        }
-
-        if size:
-            content_pack['info']['size'] = size
-
-        return await self.relay_service_message(service_userid, service_roomid,
-                                                content_pack, receiving_serviceid)
-
     async def service_user_join(self, service_userid, service_roomid):
         """
         Called when a service user joins a room.
@@ -773,33 +743,6 @@ class AppService:
                 resp = await self.api.set_avatar_url(user_id, avatar_url,
                                                      query_params={'auth_token': self.api.token,
                                                                    'user_id': user_id})
-
-            return resp
-
-    async def set_matrix_room_image(self, room_id, image_url, force=False):
-        """
-        Set the avatar image for a matrix room.
-        """
-        # For currently unknown reason,
-        # api.get_room_avatar sometimes raises 404: {"errcode":"M_NOT_FOUND","error":"Event not found."}
-        # Catching that specific error should still allow for trying to set the avatar however.
-        existing_avatar_url = ''
-        try:
-            existing_avatar_url = await self.api.get_room_avatar(room_id)
-        except MatrixRequestError as e:
-            if e.code == 404:
-                log.debug("room %s reported that event m.room.avatar is unknown", room_id)
-            else:
-                raise e
-
-        if force or not (existing_avatar_url and image_url):
-            log.debug("Setting room avatar picture for %s, %s; replacing %s", room_id, image_url, existing_avatar_url)
-
-            # Upload to homeserver
-            avatar_url = await self.upload_image_to_matrix(self.appservice_userid, image_url)
-
-            # Set profile picture
-            resp = await self.api.set_room_avatar(room_id, avatar_url, query_params={'user_id': self.appservice_userid})
 
             return resp
 
