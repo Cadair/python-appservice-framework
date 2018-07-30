@@ -299,9 +299,9 @@ class AppService:
         """
         try:
             if matrixid in [user.matrixid for user in self.matrix_connections.keys()]:
-                json = await self.get_matrix_connection(matrixid).join_room(roomid)
+                resp = await self.get_matrix_connection(matrixid).join_room(roomid)
             else:
-                json = await self.api.join_room(roomid,
+                resp = await self.api.join_room(roomid,
                                      query_params={'user_id': matrixid,
                                                    'auth_token': self.api.token})
         except MatrixRequestError as e:
