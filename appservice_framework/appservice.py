@@ -834,7 +834,7 @@ class AppService:
             else:
                 connection = list(self.service_connections.values())[0]
         else:
-            authuser = self.dbsession.query(db.User).filter(db.User.serviceid == serviceid)
+            authuser = self.dbsession.query(db.User).filter(db.User.serviceid == serviceid).one()
             connection = self.service_connections[authuser]
 
         if wait_for_connect:
@@ -864,7 +864,7 @@ class AppService:
             else:
                 connection = list(self.matrix_connections.values())[0]
         else:
-            authuser = self.dbsession.query(db.User).filter(db.User.matrixid == matrixid)
+            authuser = self.dbsession.query(db.User).filter(db.User.matrixid == matrixid).one()
             connection = self.matrix_connections[authuser]
 
         return connection
