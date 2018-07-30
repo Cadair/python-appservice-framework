@@ -28,8 +28,8 @@ log.setLevel(logging.DEBUG)
 
 __all__ = ['AppService']
 
-
 config = namedtuple("config", "invite_only_rooms")
+
 
 class AppService:
     """
@@ -268,7 +268,6 @@ class AppService:
         content_type = event['content']['msgtype']
         await self.matrix_events['receive_message'][content_type](self, auth_user, room, event['content'])
 
-
     async def _invite_user(self, roomid, matrixid):
         """
         Invite to a room, but ignore errors if user is already in room.
@@ -412,6 +411,7 @@ class AppService:
 
         ``coro(appservice, user, room)``
         """
+
         async def part_room(self, user, room):
             await coro(self, user, room)
 
@@ -544,6 +544,36 @@ class AppService:
             "body": filename,
             "info": {}
         }
+
+        return await self.relay_service_message(service_userid, service_roomid,
+                                                content_pack, receiving_serviceid)
+
+    async def relay_service_file(self, service_userid, service_roomid,
+                                  file_url, receiving_serviceid=None,
+                                  filename=None, body=None, size=None):
+        p = urlparse(file_url)
+        if p.scheme != "mxc":
+            user = self.dbsession.query(db.User).filter(db.User.serviceid == service_userid).one()
+            file_url = await self.upload_image_to_matrix(user.matrixid, file_url)
+
+        # Take the last section of the path to be the name
+        if not filename:
+            filename = os.path.split(p.path)[1]
+
+        # Offer to set body seperate, e.g. to be able to add a tag for bridge message deduplication.
+        if not body:
+            body = filename
+
+        content_pack = {
+            "url": file_url,
+            "msgtype": "m.file",
+            "filename": filename,
+            "body": body,
+            "info": {}
+        }
+
+        if size:
+            content_pack['info']['size'] = size
 
         return await self.relay_service_message(service_userid, service_roomid,
                                                 content_pack, receiving_serviceid)
@@ -700,6 +730,33 @@ class AppService:
 
             return resp
 
+    async def set_matrix_room_image(self, room_id, image_url, force=False):
+        """
+        Set the avatar image for a matrix room.
+        """
+        # For currently unknown reason,
+        # api.get_room_avatar sometimes raises 404: {"errcode":"M_NOT_FOUND","error":"Event not found."}
+        # Catching that specific error should still allow for trying to set the avatar however.
+        existing_avatar_url = ''
+        try:
+            existing_avatar_url = await self.api.get_room_avatar(room_id)
+        except MatrixRequestError as e:
+            if e.code == 404:
+                log.debug("room %s reported that event m.room.avatar is unknown", room_id)
+            else:
+                raise e
+
+        if force or not (existing_avatar_url and image_url):
+            log.debug("Setting room avatar picture for %s, %s; replacing %s", room_id, image_url, existing_avatar_url)
+
+            # Upload to homeserver
+            avatar_url = await self.upload_image_to_matrix(self.appservice_userid, image_url)
+
+            # Set profile picture
+            resp = await self.api.set_room_avatar(room_id, avatar_url, query_params={'user_id': self.appservice_userid})
+
+            return resp
+
     ######################################################################################
     # Appservice Helper Methods
     ######################################################################################
@@ -795,7 +852,6 @@ class AppService:
             return self.dbsession.query(db.Room).filter(filterexp).one_or_none()
         if serviceid:
             return self.dbsession.query(db.LinkedRoom).filter(db.LinkedRoom.serviceid == serviceid).one_or_none()
-
 
     def add_authenticated_user(self, matrixid, auth_token, serviceid=None, nick=None):
         """
