@@ -299,9 +299,9 @@ class AppService:
         """
         try:
             if matrixid in [user.matrixid for user in self.matrix_connections.keys()]:
-                json = await self.get_matrix_connection(matrixid).join_room(roomid)
+                resp = await self.get_matrix_connection(matrixid).join_room(roomid)
             else:
-                json = await self.api.join_room(roomid,
+                resp = await self.api.join_room(roomid,
                                      query_params={'user_id': matrixid,
                                                    'auth_token': self.api.token})
         except MatrixRequestError as e:
@@ -834,7 +834,7 @@ class AppService:
             else:
                 connection = list(self.service_connections.values())[0]
         else:
-            authuser = self.dbsession.query(db.User).filter(db.User.serviceid == serviceid)
+            authuser = self.dbsession.query(db.User).filter(db.User.serviceid == serviceid).one()
             connection = self.service_connections[authuser]
 
         if wait_for_connect:
@@ -864,11 +864,7 @@ class AppService:
             else:
                 connection = list(self.matrix_connections.values())[0]
         else:
-            log.debug(self.dbsession.query(db.User).filter(db.User.matrixid == matrixid).all())
-            log.debug(self.matrix_connections)
-            for u in self.matrix_connections:
-                log.debug(f'{u.matrixid}, {u.matrixpass or None}')
-            authuser = self.dbsession.query(db.User).filter(db.User.matrixid == matrixid)
+            authuser = self.dbsession.query(db.User).filter(db.User.matrixid == matrixid).one()
             connection = self.matrix_connections[authuser]
 
         return connection
