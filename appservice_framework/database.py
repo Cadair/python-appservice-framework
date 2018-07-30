@@ -138,11 +138,13 @@ class AuthenticatedUser(User):
 
     id = sa.Column(sa.Integer, sa.ForeignKey("user.id"), primary_key=True)
     auth_token = sa.Column(sa.String, nullable=True)
+    matrixpass = sa.Column(sa.String, nullable=True)
 
 
-    def __init__(self, matrixid, auth_token, serviceid=None, nick=None):
+    def __init__(self, matrixid, auth_token, matrixpass, serviceid=None, nick=None):
         super().__init__(matrixid, serviceid, nick)
         self.auth_token = auth_token
+        self.matrixpass = matrixpass
 
 
 def initialize(*args, **kwargs):
